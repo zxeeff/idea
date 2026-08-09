@@ -83,6 +83,18 @@ a:hover { text-decoration: underline; }
   content: "";
 }
 .connection.offline::before { background: var(--red); box-shadow: none; }
+.topbar-actions { display: flex; align-items: center; gap: 12px; }
+.topbar-actions form { margin: 0; }
+.logout-button {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.logout-button:hover { border-color: var(--line-strong); color: var(--text); }
 
 .workspace-grid {
   display: grid;
@@ -539,9 +551,15 @@ JAVASCRIPT = r"""
   const request = async (path, options = {}) => {
     const response = await fetch(path, {
       cache: "no-store",
+      credentials: "same-origin",
       ...options,
       headers: { "Accept": "application/json", ...(options.headers || {}) },
     });
+    if (response.status === 401) {
+      const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+      throw new Error("로그인 세션이 만료되었습니다.");
+    }
     const payload = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
     if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
     return payload;

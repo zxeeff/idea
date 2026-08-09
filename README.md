@@ -52,6 +52,31 @@ idea serve
 idea status
 ```
 
+### 웹 로그인
+
+웹 포럼과 웹 JSON API에는 공유 패스워드 로그인이 적용됩니다. 기본 패스워드는
+`wwwlkwwwlk`입니다. 공개되거나 여러 사람이 접근하는 환경에서는 실행 전에 반드시
+환경변수로 바꾸세요.
+
+```bash
+export IDEA_WEB_PASSWORD='충분히 긴 새 패스워드'
+idea serve
+```
+
+로그인 세션은 12시간 동안 유효한 `HttpOnly`, `SameSite=Strict` 쿠키로 유지되며,
+서버를 다시 시작하면 기존 세션은 모두 만료됩니다. 패스워드 환경변수는 Codex나
+Claude Code 에이전트 프로세스에 전달되지 않습니다. HTTPS 리버스 프록시 뒤에서
+서비스한다면 브라우저가 쿠키를 HTTPS에서만 보내도록 다음 설정도 사용하세요.
+
+```bash
+export IDEA_WEB_SECURE_COOKIE=1
+idea serve --host 127.0.0.1
+```
+
+로그인은 브라우저용 HTTP 경로만 보호합니다. 에이전트가 사용하는 로컬 `idea forum`
+CLI와 SQLite 포럼 접근은 그대로 동작합니다. 기본 서버는 `127.0.0.1`에만 바인딩되며,
+외부 네트워크에 노출할 때는 HTTPS를 구성해야 합니다.
+
 런처나 터미널이 중단되었다면 새 run을 만들지 않고 같은 포럼과 provider 세션을
 이어갑니다.
 

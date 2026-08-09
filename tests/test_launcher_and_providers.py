@@ -2,19 +2,32 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from idea.domain import AgentProfile, Effort, ProcessState, Provider
 from idea.forum import Forum
 from idea.launcher import prepare_resume, prepare_run, run_reactor
 from idea.profiles import default_profiles
-from idea.providers import Invocation, run_agent
+from idea.providers import Invocation, agent_environment, run_agent
 
 
 class LauncherAndProvidersTest(unittest.TestCase):
+    def test_web_password_is_not_inherited_by_provider_processes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"IDEA_WEB_PASSWORD": "do-not-leak"}):
+                env = agent_environment(
+                    state_dir=Path(directory),
+                    run_id="run-id",
+                    agent={"id": "agent-id", "name": "peer"},
+                )
+        self.assertNotIn("IDEA_WEB_PASSWORD", env)
+        self.assertEqual("run-id", env["IDEA_RUN_ID"])
+
     def test_all_peers_share_workspace_and_are_prepared_without_stages(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

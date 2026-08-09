@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import html
 import json
 import mimetypes
+import os
+import secrets
 import shutil
+import threading
+import time
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -12,6 +19,117 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .forum import Forum, resolve_run_id
 from .web_assets import CSS, JAVASCRIPT
+
+
+DEFAULT_WEB_PASSWORD = "wwwlkwwwlk"
+WEB_PASSWORD_ENV = "IDEA_WEB_PASSWORD"
+SECURE_COOKIE_ENV = "IDEA_WEB_SECURE_COOKIE"
+SESSION_COOKIE_PREFIX = "idea_session"
+SESSION_TTL_SECONDS = 12 * 60 * 60
+MAX_FORM_BYTES = 64 * 1024
+MAX_JSON_BYTES = 2 * 1024 * 1024
+
+
+class PasswordSessions:
+    """Small in-memory password session store for the browser-facing server."""
+
+    def __init__(
+        self,
+        password: str,
+        *,
+        secure_cookie: bool = False,
+        ttl_seconds: int = SESSION_TTL_SECONDS,
+        cookie_name: str = SESSION_COOKIE_PREFIX,
+    ) -> None:
+        if not password:
+            raise ValueError(f"{WEB_PASSWORD_ENV} must not be empty")
+        self._password_digest = hashlib.sha256(password.encode("utf-8")).digest()
+        self._secure_cookie = secure_cookie
+        self._ttl_seconds = ttl_seconds
+        self.cookie_name = cookie_name
+        self._sessions: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def verify_password(self, candidate: str) -> bool:
+        candidate_digest = hashlib.sha256(candidate.encode("utf-8")).digest()
+        return hmac.compare_digest(candidate_digest, self._password_digest)
+
+    def issue(self) -> str:
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        with self._lock:
+            self._purge_expired(now)
+            self._sessions[token] = now + self._ttl_seconds
+        return token
+
+    def valid(self, token: str | None) -> bool:
+        if not token:
+            return False
+        now = time.time()
+        with self._lock:
+            expires_at = self._sessions.get(token)
+            if expires_at is None:
+                return False
+            if expires_at <= now:
+                self._sessions.pop(token, None)
+                return False
+            return True
+
+    def revoke(self, token: str | None) -> None:
+        if not token:
+            return
+        with self._lock:
+            self._sessions.pop(token, None)
+
+    def session_cookie(self, token: str) -> str:
+        cookie = SimpleCookie()
+        cookie[self.cookie_name] = token
+        morsel = cookie[self.cookie_name]
+        morsel["path"] = "/"
+        morsel["httponly"] = True
+        morsel["samesite"] = "Strict"
+        morsel["max-age"] = str(self._ttl_seconds)
+        if self._secure_cookie:
+            morsel["secure"] = True
+        return cookie.output(header="").strip()
+
+    def clearing_cookie(self) -> str:
+        cookie = SimpleCookie()
+        cookie[self.cookie_name] = ""
+        morsel = cookie[self.cookie_name]
+        morsel["path"] = "/"
+        morsel["httponly"] = True
+        morsel["samesite"] = "Strict"
+        morsel["max-age"] = "0"
+        if self._secure_cookie:
+            morsel["secure"] = True
+        return cookie.output(header="").strip()
+
+    def _purge_expired(self, now: float) -> None:
+        expired = [
+            token
+            for token, expires_at in self._sessions.items()
+            if expires_at <= now
+        ]
+        for token in expired:
+            self._sessions.pop(token, None)
+
+
+def _safe_next_path(value: str | None) -> str:
+    if not value or not value.startswith("/") or value.startswith("//"):
+        return "/"
+    if "\\" in value or any(
+        ord(character) < 32 or ord(character) == 127 for character in value
+    ):
+        return "/"
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc or parsed.path in {"/login", "/logout"}:
+        return "/"
+    return value
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _e(value: Any) -> str:
@@ -83,6 +201,61 @@ def _peer_html(agent: dict[str, Any]) -> str:
     )
 
 
+def render_login_page(next_path: str = "/", *, error: bool = False) -> str:
+    message = (
+        '<p class="error" role="alert">패스워드가 올바르지 않습니다.</p>'
+        if error
+        else '<p class="hint">포럼에 접근하려면 패스워드를 입력하세요.</p>'
+    )
+    return f"""<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IDEA Forum · 로그인</title>
+<style>
+:root {{ color-scheme: dark; }}
+* {{ box-sizing: border-box; }}
+body {{
+  min-height: 100dvh; margin: 0; display: grid; place-items: center; padding: 24px;
+  background: #090d13; color: #e8edf3;
+  font: 14px/1.55 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}}
+.card {{
+  width: min(100%, 390px); padding: 28px; border: 1px solid #283241;
+  border-radius: 12px; background: #111720; box-shadow: 0 18px 50px #0005;
+}}
+.eyebrow {{ color: #7ee787; font-size: 11px; font-weight: 800; letter-spacing: .12em; }}
+h1 {{ margin: 5px 0 4px; font-size: 22px; }}
+.hint, .error {{ margin: 0 0 20px; color: #91a0b3; }}
+.error {{ color: #ff7b72; }}
+label {{ display: block; margin-bottom: 7px; color: #91a0b3; font-size: 12px; }}
+input {{
+  width: 100%; padding: 11px 12px; border: 1px solid #3a4759; border-radius: 7px;
+  outline: none; background: #0d121a; color: #e8edf3; font: inherit;
+}}
+input:focus {{ border-color: #73b7ff; box-shadow: 0 0 0 3px #73b7ff22; }}
+button {{
+  width: 100%; margin-top: 13px; padding: 10px 14px; border: 1px solid #7ee787;
+  border-radius: 7px; background: #173620; color: #e8edf3; cursor: pointer;
+  font: inherit; font-weight: 700;
+}}
+button:hover {{ background: #21492b; }}
+</style></head><body>
+<main class="card">
+  <div class="eyebrow">IDEA / FORUM</div>
+  <h1>로그인</h1>
+  {message}
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{_e(_safe_next_path(next_path))}">
+    <label for="password">패스워드</label>
+    <input id="password" name="password" type="password" required autofocus
+      autocomplete="current-password">
+    <button type="submit">포럼 열기</button>
+  </form>
+</main>
+</body></html>"""
+
+
 def render_page(forum: Forum, run_id: str) -> str:
     """Render a lightweight application shell; thread data is fetched on demand."""
 
@@ -115,7 +288,12 @@ def render_page(forum: Forum, run_id: str) -> str:
       <span class="run-chip" title="{_e(run_id)}">{_e(run_id)}</span></div>
     <div class="goal" title="{_e(run["goal"])}">{_e(run["goal"])}</div>
   </div>
-  <div id="connection" class="connection" aria-live="polite">실시간 확인 중</div>
+  <div class="topbar-actions">
+    <div id="connection" class="connection" aria-live="polite">실시간 확인 중</div>
+    <form method="post" action="/logout">
+      <button class="logout-button" type="submit">로그아웃</button>
+    </form>
+  </div>
 </header>
 <main class="workspace-grid" data-idea-app data-run-id="{_e(run_id)}"
   data-high-water="{high_water}">
@@ -188,6 +366,7 @@ def render_page(forum: Forum, run_id: str) -> str:
 
 class ForumHandler(BaseHTTPRequestHandler):
     forum: Forum
+    auth: PasswordSessions
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt: str, *args: object) -> None:
@@ -197,10 +376,12 @@ class ForumHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
-            "connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
+            "connect-src 'self'; img-src 'self' data:; form-action 'self'; "
+            "base-uri 'none'; frame-ancestors 'none'",
         )
 
     def _json(self, value: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -212,9 +393,9 @@ class ForumHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _html(self, value: str) -> None:
+    def _html(self, value: str, status: HTTPStatus = HTTPStatus.OK) -> None:
         data = value.encode()
-        self.send_response(HTTPStatus.OK)
+        self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self._security_headers()
@@ -224,13 +405,19 @@ class ForumHandler(BaseHTTPRequestHandler):
     def _error(self, status: HTTPStatus, message: str) -> None:
         self._json({"error": message}, status)
 
-    def _form(self) -> dict[str, str]:
+    def _body_length(self, maximum: int) -> int:
         length = int(self.headers.get("Content-Length", "0"))
+        if length < 0 or length > maximum:
+            raise ValueError(f"request body must be at most {maximum} bytes")
+        return length
+
+    def _form(self) -> dict[str, str]:
+        length = self._body_length(MAX_FORM_BYTES)
         values = parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True)
         return {key: items[-1] for key, items in values.items()}
 
     def _json_body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0"))
+        length = self._body_length(MAX_JSON_BYTES)
         value = json.loads(self.rfile.read(length))
         if not isinstance(value, dict):
             raise ValueError("JSON body must be an object")
@@ -252,15 +439,47 @@ class ForumHandler(BaseHTTPRequestHandler):
             raise ValueError(f"{key} must be between {minimum} and {maximum}")
         return value
 
+    def _redirect_location(self, location: str, *, cookie: str | None = None) -> None:
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", location)
+        if cookie is not None:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", "0")
+        self._security_headers()
+        self.end_headers()
+
     def _redirect(self, run_id: str, thread_id: str | None = None) -> None:
         location = f"/?run={quote(run_id)}"
         if thread_id:
             location += f"&thread={quote(thread_id)}"
-        self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", location)
-        self.send_header("Content-Length", "0")
-        self._security_headers()
-        self.end_headers()
+        self._redirect_location(location)
+
+    def _session_token(self) -> str | None:
+        header = self.headers.get("Cookie")
+        if not header:
+            return None
+        cookie = SimpleCookie()
+        try:
+            cookie.load(header)
+        except CookieError:
+            return None
+        morsel = cookie.get(self.auth.cookie_name)
+        return morsel.value if morsel is not None else None
+
+    def _authenticated(self) -> bool:
+        return self.auth.valid(self._session_token())
+
+    def _require_authentication(self, parsed_path: str) -> bool:
+        if self._authenticated():
+            return True
+        if self.command != "GET":
+            self.close_connection = True
+        if parsed_path.startswith("/api/"):
+            self._error(HTTPStatus.UNAUTHORIZED, "authentication required")
+        else:
+            target = _safe_next_path(self.path)
+            self._redirect_location(f"/login?next={quote(target, safe='')}")
+        return False
 
     def _overview(self, run_id: str) -> dict[str, Any]:
         return {
@@ -280,6 +499,15 @@ class ForumHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", "0")
                 self._security_headers()
                 self.end_headers()
+                return
+            if parsed.path == "/login":
+                next_path = _safe_next_path(query.get("next", ["/"])[-1])
+                if self._authenticated():
+                    self._redirect_location(next_path)
+                else:
+                    self._html(render_login_page(next_path))
+                return
+            if not self._require_authentication(parsed.path):
                 return
             if parsed.path == "/":
                 run_id = resolve_run_id(self.forum, query.get("run", [None])[-1])
@@ -371,6 +599,31 @@ class ForumHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
         try:
+            if parsed.path == "/login":
+                form = self._form()
+                next_path = _safe_next_path(form.get("next"))
+                password = str(form.get("password", ""))
+                if self.auth.verify_password(password):
+                    token = self.auth.issue()
+                    self._redirect_location(
+                        next_path,
+                        cookie=self.auth.session_cookie(token),
+                    )
+                else:
+                    self._html(
+                        render_login_page(next_path, error=True),
+                        HTTPStatus.UNAUTHORIZED,
+                    )
+                return
+            if parsed.path == "/logout":
+                self.auth.revoke(self._session_token())
+                self._redirect_location(
+                    "/login",
+                    cookie=self.auth.clearing_cookie(),
+                )
+                return
+            if not self._require_authentication(parsed.path):
+                return
             if parsed.path == "/post":
                 form = self._form()
                 run_id = self._required_text(form, "run_id")
@@ -431,7 +684,7 @@ class ForumHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._error(HTTPStatus.NOT_FOUND, "not found")
-        except (KeyError, ValueError, json.JSONDecodeError) as error:
+        except (KeyError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
             self._error(HTTPStatus.BAD_REQUEST, str(error))
 
 
@@ -439,8 +692,34 @@ class ForumHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
-def make_server(forum: Forum, host: str = "127.0.0.1", port: int = 7331) -> ThreadingHTTPServer:
-    handler = type("BoundForumHandler", (ForumHandler,), {"forum": forum})
+def make_server(
+    forum: Forum,
+    host: str = "127.0.0.1",
+    port: int = 7331,
+    *,
+    password: str | None = None,
+    secure_cookie: bool | None = None,
+) -> ForumHTTPServer:
+    configured_password = (
+        os.environ.get(WEB_PASSWORD_ENV, DEFAULT_WEB_PASSWORD)
+        if password is None
+        else password
+    )
+    auth = PasswordSessions(
+        configured_password,
+        secure_cookie=_env_flag(SECURE_COOKIE_ENV)
+        if secure_cookie is None
+        else secure_cookie,
+        cookie_name=(
+            f"{SESSION_COOKIE_PREFIX}_"
+            f"{hashlib.sha256(str(forum.state_dir).encode()).hexdigest()[:12]}"
+        ),
+    )
+    handler = type(
+        "BoundForumHandler",
+        (ForumHandler,),
+        {"forum": forum, "auth": auth},
+    )
     return ForumHTTPServer((host, port), handler)
 
 

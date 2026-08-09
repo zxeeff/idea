@@ -34,6 +34,9 @@ def agent_environment(
     trigger_thread_id: str | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
+    # The browser password belongs to the launcher process. Never expose it to
+    # autonomous provider subprocesses, especially in bypass-permission mode.
+    env.pop("IDEA_WEB_PASSWORD", None)
     existing_pythonpath = env.get("PYTHONPATH")
     module_root = str(_module_root())
     env["PYTHONPATH"] = (

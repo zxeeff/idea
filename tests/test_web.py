@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import threading
 import unittest
 import urllib.parse
 import urllib.request
+from http.cookiejar import CookieJar
 from pathlib import Path
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 from idea.forum import Forum
-from idea.web import make_server
+from idea.web import (
+    DEFAULT_WEB_PASSWORD,
+    PasswordSessions,
+    _safe_next_path,
+    make_server,
+)
 
 
 class WebForumTest(unittest.TestCase):
@@ -23,6 +32,12 @@ class WebForumTest(unittest.TestCase):
         self.server_thread.start()
         host, port = self.server.server_address[:2]
         self.base_url = f"http://{host}:{port}"
+        self.raw_opener = urllib.request.build_opener()
+        self.cookies = CookieJar()
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self.cookies)
+        )
+        self.login()
 
     def tearDown(self) -> None:
         self.server.shutdown()
@@ -31,11 +46,95 @@ class WebForumTest(unittest.TestCase):
         self.temp.cleanup()
 
     def get_text(self, path: str) -> str:
-        with urllib.request.urlopen(f"{self.base_url}{path}", timeout=3) as response:
+        with self.opener.open(f"{self.base_url}{path}", timeout=3) as response:
             return response.read().decode()
 
     def get_json(self, path: str) -> dict:
         return json.loads(self.get_text(path))
+
+    def login(self, password: str = DEFAULT_WEB_PASSWORD, next_path: str = "/") -> str:
+        data = urllib.parse.urlencode(
+            {"password": password, "next": next_path}
+        ).encode()
+        request = urllib.request.Request(f"{self.base_url}/login", data=data)
+        with self.opener.open(request, timeout=3) as response:
+            response.read()
+            return response.geturl()
+
+    def test_login_protects_pages_and_api_and_preserves_destination(self) -> None:
+        destination = f"/?run={self.run['id']}"
+        with self.raw_opener.open(f"{self.base_url}{destination}", timeout=3) as response:
+            login_page = response.read().decode()
+            self.assertIn("/login?next=", response.geturl())
+            self.assertIn("IDEA / FORUM", login_page)
+            self.assertNotIn("goal &lt;unsafe&gt;", login_page)
+
+        with self.assertRaises(HTTPError) as context:
+            self.raw_opener.open(
+                f"{self.base_url}/api/runs/{self.run['id']}", timeout=3
+            )
+        self.assertEqual(401, context.exception.code)
+        self.assertEqual(
+            {"error": "authentication required"},
+            json.loads(context.exception.read()),
+        )
+
+        self.assertEqual(destination, self.login(next_path=destination).removeprefix(self.base_url))
+        self.assertIn("data-idea-app", self.get_text(destination))
+
+    def test_wrong_password_is_rejected_and_logout_revokes_session(self) -> None:
+        other_cookies = CookieJar()
+        other = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(other_cookies)
+        )
+        data = urllib.parse.urlencode(
+            {"password": "wrong-password", "next": "/"}
+        ).encode()
+        with self.assertRaises(HTTPError) as context:
+            other.open(
+                urllib.request.Request(f"{self.base_url}/login", data=data),
+                timeout=3,
+            )
+        self.assertEqual(401, context.exception.code)
+        self.assertIn("패스워드가 올바르지 않습니다", context.exception.read().decode())
+        self.assertEqual([], list(other_cookies))
+
+        logout = urllib.request.Request(f"{self.base_url}/logout", data=b"")
+        with self.opener.open(logout, timeout=3) as response:
+            self.assertTrue(response.geturl().endswith("/login"))
+        with self.assertRaises(HTTPError) as logged_out:
+            self.opener.open(f"{self.base_url}/api/runs", timeout=3)
+        self.assertEqual(401, logged_out.exception.code)
+
+    def test_default_password_and_session_cookie_security_attributes(self) -> None:
+        self.assertEqual("wwwlkwwwlk", DEFAULT_WEB_PASSWORD)
+        auth = PasswordSessions(DEFAULT_WEB_PASSWORD, secure_cookie=True)
+        self.assertTrue(auth.verify_password(DEFAULT_WEB_PASSWORD))
+        self.assertFalse(auth.verify_password("not-it"))
+        cookie = auth.session_cookie(auth.issue())
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Strict", cookie)
+        self.assertIn("Secure", cookie)
+        self.assertIn("Max-Age=43200", cookie)
+
+    def test_environment_override_and_redirect_validation(self) -> None:
+        with patch.dict(os.environ, {"IDEA_WEB_PASSWORD": "custom-password"}):
+            other_forum = Forum(self.root / ".idea-other")
+            other_server = make_server(other_forum, "127.0.0.1", 0)
+        try:
+            other_auth = other_server.RequestHandlerClass.auth
+            self.assertTrue(other_auth.verify_password("custom-password"))
+            self.assertFalse(other_auth.verify_password(DEFAULT_WEB_PASSWORD))
+            self.assertNotEqual(
+                self.server.RequestHandlerClass.auth.cookie_name,
+                other_auth.cookie_name,
+            )
+        finally:
+            other_server.server_close()
+
+        self.assertEqual("/", _safe_next_path("//example.invalid/path"))
+        self.assertEqual("/", _safe_next_path("/\\example.invalid/path"))
+        self.assertEqual("/?run=run-id", _safe_next_path("/?run=run-id"))
 
     def test_page_is_a_lightweight_non_reloading_shell(self) -> None:
         marker = "BODY_MARKER_" + "x" * 20_000
