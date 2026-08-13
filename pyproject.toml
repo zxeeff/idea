@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "idea-swarm"
+version = "0.1.0"
+description = "Iterative Distributed Exploration Agents for multi-agent collaboration on a shared goal"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "IDEA contributors" }]
+dependencies = []
+
+[project.scripts]
+idea = "idea.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
