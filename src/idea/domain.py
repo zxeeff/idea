@@ -16,6 +16,7 @@ class Effort(StrEnum):
     MEDIUM = "medium"
     HIGH = "high"
     XHIGH = "xhigh"
+    ULTRA = "ultra"
     MAX = "max"
 
 

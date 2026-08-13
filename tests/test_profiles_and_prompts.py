@@ -2,43 +2,87 @@ from __future__ import annotations
 
 import unittest
 
+import tempfile
+from pathlib import Path
+
 from idea.domain import AgentProfile, Effort, Provider
-from idea.profiles import default_profiles
+from idea.profiles import (
+    default_profiles,
+    load_profiles_file,
+    parse_agent_spec,
+    resolve_profiles,
+)
 from idea.prompts import shared_prompt, user_task
 
 
 class ProfilesAndPromptsTest(unittest.TestCase):
-    def test_defaults_vary_models_and_effort_without_roles_or_phases(self) -> None:
+    def test_defaults_load_from_repo_toml_without_roles_or_phases(self) -> None:
+        # The lineup is user-editable data (profiles.toml at the repository
+        # root), so assert structural invariants rather than exact contents.
         profiles = default_profiles()
-        self.assertEqual(16, len(profiles))
+        self.assertGreater(len(profiles), 0)
+        self.assertEqual(len(profiles), len({profile.name for profile in profiles}))
+        self.assertGreater(len({profile.model for profile in profiles}), 1)
+        self.assertGreater(len({profile.effort for profile in profiles}), 1)
         self.assertEqual(
-            {"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "sonnet", "opus"},
-            {profile.model for profile in profiles},
+            {Provider.OPENAI, Provider.ANTHROPIC},
+            {profile.provider for profile in profiles},
         )
-        self.assertEqual(4, sum(profile.model == "gpt-5.6-sol" for profile in profiles))
-        self.assertEqual(
-            2,
-            sum(
-                profile.model == "gpt-5.6-sol" and profile.effort is Effort.MAX
-                for profile in profiles
-            ),
-        )
-        self.assertEqual(6, sum(profile.model == "opus" for profile in profiles))
-        for effort in (Effort.HIGH, Effort.XHIGH, Effort.MAX):
-            self.assertEqual(
-                2,
-                sum(
-                    profile.model == "opus" and profile.effort is effort
-                    for profile in profiles
-                ),
-            )
-        self.assertTrue({Effort.LOW, Effort.MEDIUM, Effort.HIGH, Effort.XHIGH, Effort.MAX} <= {
-            profile.effort for profile in profiles
-        })
         for profile in profiles:
             self.assertFalse(hasattr(profile, "role"))
             self.assertFalse(hasattr(profile, "phase"))
             self.assertFalse(hasattr(profile, "mission"))
+
+    def test_agent_spec_parses_provider_aliases_counts_and_names(self) -> None:
+        profiles = parse_agent_spec("gpt:gpt-daybreak-blue-latest:high:2")
+        self.assertEqual(2, len(profiles))
+        self.assertEqual(Provider.OPENAI, profiles[0].provider)
+        self.assertEqual("gpt-daybreak-blue-latest", profiles[0].model)
+        self.assertEqual(Effort.HIGH, profiles[0].effort)
+        self.assertEqual(
+            ["gpt-daybreak-blue-latest-high", "gpt-daybreak-blue-latest-high-2"],
+            [profile.name for profile in profiles],
+        )
+        (claude,) = parse_agent_spec("claude:opus:max")
+        self.assertEqual(Provider.ANTHROPIC, claude.provider)
+        for bad in ("openai:model", "nope:model:high", "openai:model:warp", "openai:model:high:0"):
+            with self.assertRaises(ValueError):
+                parse_agent_spec(bad)
+
+    def test_profiles_file_and_specs_replace_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as workdir:
+            path = Path(workdir) / "agents.toml"
+            path.write_text(
+                """
+[[agents]]
+name = "blue"
+provider = "openai"
+model = "gpt-daybreak-blue-latest"
+effort = "high"
+count = 2
+
+[[agents]]
+provider = "claude"
+model = "opus"
+effort = "max"
+""",
+                encoding="utf-8",
+            )
+            loaded = load_profiles_file(path)
+            self.assertEqual(["blue", "blue-2", "opus-max"], [p.name for p in loaded])
+
+            combined = resolve_profiles(
+                specs=["openai:gpt-5.6-sol:xhigh"], profiles_file=path
+            )
+            self.assertEqual(4, len(combined))
+            self.assertEqual("gpt-5-6-sol-xhigh", combined[-1].name)
+
+            filtered = resolve_profiles(names=["blue-2"], profiles_file=path)
+            self.assertEqual(("blue-2",), tuple(p.name for p in filtered))
+
+        self.assertEqual(default_profiles(), resolve_profiles())
+        with self.assertRaises(ValueError):
+            resolve_profiles(names=["missing"], specs=["openai:gpt-5.6-sol:high"])
 
     def test_top_level_prompt_is_lean_and_exposes_only_peer_names(self) -> None:
         profile = AgentProfile("peer-one", Provider.OPENAI, "hidden-self-model", Effort.LOW)

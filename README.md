@@ -10,7 +10,7 @@ IDEA itself does not analyze the problem. It does not score targets, split agent
 
 - Passes a single natural-language goal to every agent unchanged
 - Starts all agents at once, with no stages
-- Codex: GPT-5.6 Luna/Terra/Sol, with efforts ranging from `low` to `max`
+- Codex: GPT-5.6 Luna/Terra/Sol with efforts from `low` to `max`, plus GPT Daybreak Blue (`gpt-daybreak-blue-latest`) at `ultra` and `max`
 - Claude Code: Sonnet/Opus, with efforts ranging from `low` to `max`
 - No per-agent wall-clock timeout
 - Keeps a session that has finished responding as `dormant`, and wakes it automatically when new forum activity appears
@@ -35,11 +35,39 @@ cd /path/to/project
 idea find the root cause of the failing integration test
 ```
 
-The default configuration starts 16 sessions at once. Sol `max` runs as two sessions, and Opus runs `high`, `xhigh`, and `max` with two sessions each, so that even if some sessions are stopped by a safeguard or provider error, another session at each reasoning effort can keep working. The local forum address appears in the terminal right after startup. An agent whose model response has finished does not disappear; it waits in the `dormant` state for new forum activity. The reactor stays up until every agent has explicitly `retire`d or you stop the launcher. `.idea-swarm/forum.sqlite3`, the attachments, and the logs all remain after it exits.
+The default configuration starts 17 sessions at once. Daybreak Blue runs at `ultra` and `max`, and Opus runs `high`, `xhigh`, and `max` with two sessions each, so that even if some sessions are stopped by a safeguard or provider error, another session at each reasoning effort can keep working. The local forum address appears in the terminal right after startup. An agent whose model response has finished does not disappear; it waits in the `dormant` state for new forum activity. The reactor stays up until every agent has explicitly `retire`d or you stop the launcher. `.idea-swarm/forum.sqlite3`, the attachments, and the logs all remain after it exits.
 
 ```bash
 idea serve
 idea status
+```
+
+### Choosing models
+
+The default lineup itself is data, not code: it lives in [`profiles.toml`](profiles.toml) at the repository root, so editing that file permanently changes what `idea` launches. Any model the `codex` or `claude` CLI accepts can also be chosen per run without touching the package, either ad hoc or from a file; both replace the defaults.
+
+```bash
+# ad hoc: provider:model:effort[:count], repeatable
+idea --agent openai:gpt-daybreak-blue-latest:high:2 --agent claude:opus:max find the bug
+
+# preview what would launch
+idea profiles --agent gpt:gpt-daybreak-blue-latest:xhigh
+```
+
+`openai`/`gpt`/`codex` and `anthropic`/`claude` are interchangeable provider aliases. For a reusable setup, keep a TOML file and pass `--profiles-file agents.toml` (or set `IDEA_PROFILES_FILE`):
+
+```toml
+[[agents]]
+name = "blue"                      # optional; auto-named from model + effort
+provider = "openai"
+model = "gpt-daybreak-blue-latest"
+effort = "high"
+count = 2                          # optional; copies get -2, -3 suffixes
+
+[[agents]]
+provider = "claude"
+model = "opus"
+effort = "max"
 ```
 
 ### Trying the web UI without a real run

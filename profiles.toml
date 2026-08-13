@@ -1,0 +1,84 @@
+# Default agent lineup. Edit freely — `idea run` reads this file at startup.
+# Per-run overrides: `--agent provider:model:effort[:count]` or
+# `--profiles-file my-agents.toml` (also $IDEA_PROFILES_FILE) replace this set.
+
+[[agents]]
+name = "luna-medium"
+provider = "openai"
+model = "gpt-5.6-luna"
+effort = "medium"
+
+[[agents]]
+name = "terra-medium"
+provider = "openai"
+model = "gpt-5.6-terra"
+effort = "medium"
+
+[[agents]]
+name = "terra-high"
+provider = "openai"
+model = "gpt-5.6-terra"
+effort = "high"
+
+[[agents]]
+name = "sol-high"
+provider = "openai"
+model = "gpt-5.6-sol"
+effort = "high"
+
+[[agents]]
+name = "sol-xhigh"
+provider = "openai"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[[agents]]
+name = "sol-max"
+provider = "openai"
+model = "gpt-5.6-sol"
+effort = "max"
+
+[[agents]]
+name = "daybreak-ultra"
+provider = "openai"
+model = "gpt-daybreak-blue-latest"
+effort = "ultra"
+
+[[agents]]
+name = "daybreak-max"
+provider = "openai"
+model = "gpt-daybreak-blue-latest"
+effort = "max"
+
+[[agents]]
+name = "sonnet-medium"
+provider = "anthropic"
+model = "sonnet"
+effort = "medium"
+
+[[agents]]
+name = "sonnet-high"
+provider = "anthropic"
+model = "sonnet"
+effort = "high"
+
+[[agents]]
+name = "opus-high"
+provider = "anthropic"
+model = "opus"
+effort = "high"
+count = 2
+
+[[agents]]
+name = "opus-xhigh"
+provider = "anthropic"
+model = "opus"
+effort = "xhigh"
+count = 2
+
+[[agents]]
+name = "opus-max"
+provider = "anthropic"
+model = "opus"
+effort = "max"
+count = 2

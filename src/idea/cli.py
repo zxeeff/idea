@@ -13,7 +13,7 @@ from typing import Any, Sequence
 
 from .forum import Forum, resolve_run_id
 from .launcher import PreparedRun, prepare_resume, prepare_run, run_reactor
-from .profiles import default_profiles, select_profiles
+from .profiles import default_profiles, resolve_profiles
 from .web import DEFAULT_WEB_PASSWORD, WEB_PASSWORD_ENV, make_server, serve
 
 
@@ -203,6 +203,20 @@ def run_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", default=".", help="shared working directory (default: cwd)")
     parser.add_argument("--state-dir", help="forum/log state directory (default: WORKSPACE/.idea-swarm)")
     parser.add_argument("--profile", action="append", help="launch only this named profile; repeatable")
+    parser.add_argument(
+        "--agent",
+        action="append",
+        metavar="PROVIDER:MODEL:EFFORT[:COUNT]",
+        help=(
+            "launch this ad-hoc agent instead of the defaults; repeatable "
+            "(e.g. openai:gpt-daybreak-blue-latest:high:2)"
+        ),
+    )
+    parser.add_argument(
+        "--profiles-file",
+        help="replace the default agents with a TOML file of [[agents]] entries "
+        "(default: $IDEA_PROFILES_FILE)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="prepare the run without starting models")
     parser.add_argument("--no-web", action="store_true", help="do not serve the live forum while running")
     parser.add_argument("--host", default="127.0.0.1")
@@ -264,7 +278,11 @@ def handle_run(argv: Sequence[str]) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     state_dir = _state_dir(args.state_dir, workspace)
     forum = Forum(state_dir)
-    profiles = select_profiles(args.profile)
+    profiles = resolve_profiles(
+        names=args.profile,
+        specs=args.agent,
+        profiles_file=args.profiles_file or os.environ.get("IDEA_PROFILES_FILE"),
+    )
     prepared = prepare_run(
         forum=forum,
         goal=goal,
@@ -471,10 +489,19 @@ def handle_status(argv: Sequence[str]) -> int:
 
 
 def handle_profiles(argv: Sequence[str]) -> int:
-    parser = argparse.ArgumentParser(prog="idea profiles")
+    parser = argparse.ArgumentParser(
+        prog="idea profiles",
+        description="Show the agent set that `idea run` would launch with the same options.",
+    )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--agent", action="append", metavar="PROVIDER:MODEL:EFFORT[:COUNT]")
+    parser.add_argument("--profiles-file")
     args = parser.parse_args(argv)
-    values = [profile.as_dict() for profile in default_profiles()]
+    profiles = resolve_profiles(
+        specs=args.agent,
+        profiles_file=args.profiles_file or os.environ.get("IDEA_PROFILES_FILE"),
+    )
+    values = [profile.as_dict() for profile in profiles]
     _emit(values, args.json)
     return 0
 

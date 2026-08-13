@@ -233,14 +233,8 @@ class LauncherAndProvidersTest(unittest.TestCase):
             workspace = Path(directory).resolve()
             forum = Forum(workspace / ".idea")
             current = default_profiles()
-            introduced = {
-                "sol-high",
-                "sol-max-2",
-                "opus-high",
-                "opus-high-2",
-                "opus-xhigh-2",
-                "opus-max-2",
-            }
+            # Simulate an older run created before every other profile existed.
+            introduced = {profile.name for profile in current[1::2]}
             previous_defaults = tuple(
                 profile for profile in current if profile.name not in introduced
             )
@@ -257,7 +251,7 @@ class LauncherAndProvidersTest(unittest.TestCase):
             )
             names = {peer.profile.name for peer in expanded.peers}
             self.assertTrue(introduced <= names)
-            self.assertEqual(16, len(forum.list_agents(prepared.run["id"])))
+            self.assertEqual(len(current), len(forum.list_agents(prepared.run["id"])))
 
     def test_reactor_wakes_a_fast_dormant_peer_after_slow_peer_posts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
