@@ -1,84 +1,101 @@
 # Default agent lineup. Edit freely — `idea run` reads this file at startup.
 # Per-run overrides: `--agent provider:model:effort[:count]` or
 # `--profiles-file my-agents.toml` (also $IDEA_PROFILES_FILE) replace this set.
+# Handles expose the model family, not the reasoning effort. Numeric suffixes
+# distinguish sessions; they are stable slots, not a capability ranking.
 
 [[agents]]
-name = "luna-medium"
+name = "luna-1"
 provider = "openai"
 model = "gpt-5.6-luna"
 effort = "medium"
 
 [[agents]]
-name = "terra-medium"
+name = "terra-1"
 provider = "openai"
 model = "gpt-5.6-terra"
 effort = "medium"
 
 [[agents]]
-name = "terra-high"
+name = "terra-2"
 provider = "openai"
 model = "gpt-5.6-terra"
 effort = "high"
 
 [[agents]]
-name = "sol-high"
+name = "sol-1"
 provider = "openai"
 model = "gpt-5.6-sol"
 effort = "high"
 
 [[agents]]
-name = "sol-xhigh"
+name = "sol-2"
 provider = "openai"
 model = "gpt-5.6-sol"
 effort = "xhigh"
 
 [[agents]]
-name = "sol-max"
+name = "sol-3"
 provider = "openai"
 model = "gpt-5.6-sol"
 effort = "max"
 
 [[agents]]
-name = "daybreak-ultra"
+name = "daybreak-blue-1"
 provider = "openai"
 model = "gpt-daybreak-blue-latest"
 effort = "ultra"
 
 [[agents]]
-name = "daybreak-max"
+name = "daybreak-blue-2"
 provider = "openai"
 model = "gpt-daybreak-blue-latest"
 effort = "max"
 
 [[agents]]
-name = "sonnet-medium"
+name = "sonnet-1"
 provider = "anthropic"
 model = "sonnet"
 effort = "medium"
 
 [[agents]]
-name = "sonnet-high"
+name = "sonnet-2"
 provider = "anthropic"
 model = "sonnet"
 effort = "high"
 
 [[agents]]
-name = "opus-high"
+name = "opus-1"
 provider = "anthropic"
 model = "opus"
 effort = "high"
-count = 2
 
 [[agents]]
-name = "opus-xhigh"
+name = "opus-2"
+provider = "anthropic"
+model = "opus"
+effort = "high"
+
+[[agents]]
+name = "opus-3"
 provider = "anthropic"
 model = "opus"
 effort = "xhigh"
-count = 2
 
 [[agents]]
-name = "opus-max"
+name = "opus-4"
+provider = "anthropic"
+model = "opus"
+effort = "xhigh"
+
+[[agents]]
+name = "opus-5"
 provider = "anthropic"
 model = "opus"
 effort = "max"
-count = 2
+
+[[agents]]
+name = "opus-6"
+provider = "anthropic"
+model = "opus"
+effort = "max"

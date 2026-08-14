@@ -66,11 +66,11 @@ def _model_slug(model: str) -> str:
 
 
 def _next_free_name(base: str, taken: set[str]) -> str:
-    name = base
-    counter = 2
+    counter = 1
+    name = f"{base}-{counter}"
     while name in taken:
-        name = f"{base}-{counter}"
         counter += 1
+        name = f"{base}-{counter}"
     taken.add(name)
     return name
 
@@ -88,7 +88,7 @@ def parse_agent_spec(spec: str, taken: set[str] | None = None) -> tuple[AgentPro
     effort = _parse_effort(parts[2])
     count = _parse_count(parts[3], f"agent spec {spec!r}") if len(parts) == 4 else 1
     taken = set() if taken is None else taken
-    base = f"{_model_slug(model)}-{effort.value}"
+    base = _model_slug(model)
     return tuple(
         AgentProfile(
             name=_next_free_name(base, taken),
@@ -104,7 +104,8 @@ def load_profiles_file(path: str | Path) -> tuple[AgentProfile, ...]:
     """Load agent profiles from a TOML file with ``[[agents]]`` entries.
 
     Each entry needs ``provider``, ``model``, and ``effort``; ``name`` and
-    ``count`` are optional. Copies beyond the first get a ``-2``/``-3`` suffix.
+    ``count`` are optional. Unnamed entries use the model slug plus a numeric
+    slot; explicitly named copies beyond the first get a ``-2``/``-3`` suffix.
     """
 
     source = Path(path)
@@ -136,7 +137,7 @@ def load_profiles_file(path: str | Path) -> tuple[AgentProfile, ...]:
                     raise ValueError(f"{context}: duplicate agent name {name!r}")
                 taken.add(name)
             else:
-                name = _next_free_name(f"{_model_slug(model)}-{effort.value}", taken)
+                name = _next_free_name(_model_slug(model), taken)
             profiles.append(
                 AgentProfile(name=name, provider=provider, model=model, effort=effort)
             )

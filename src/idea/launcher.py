@@ -30,6 +30,38 @@ class PreparedRun:
     peers: tuple[PreparedPeer, ...]
 
 
+_LEGACY_DEFAULT_HANDLES = {
+    "luna-1": "luna-medium",
+    "terra-1": "terra-medium",
+    "terra-2": "terra-high",
+    "sol-1": "sol-high",
+    "sol-2": "sol-xhigh",
+    "sol-3": "sol-max",
+    "daybreak-blue-1": "daybreak-ultra",
+    "daybreak-blue-2": "daybreak-max",
+    "sonnet-1": "sonnet-medium",
+    "sonnet-2": "sonnet-high",
+    "opus-1": "opus-high",
+    "opus-2": "opus-high-2",
+    "opus-3": "opus-xhigh",
+    "opus-4": "opus-xhigh-2",
+    "opus-5": "opus-max",
+    "opus-6": "opus-max-2",
+}
+
+
+def _profile_signature(profile: AgentProfile) -> tuple[str, str, str]:
+    return (profile.provider.value, profile.model, profile.effort.value)
+
+
+def _record_signature(record: dict[str, object]) -> tuple[str, str, str]:
+    return (
+        str(record["provider"]),
+        str(record["model"]),
+        str(record["effort"]),
+    )
+
+
 def prepare_run(
     *,
     forum: Forum,
@@ -94,17 +126,42 @@ def prepare_resume(
     run = forum.get_run(run_id)
     workspace = Path(str(run["workspace"])).expanduser().resolve()
     records = forum.list_agents(run_id)
-    known_names = {str(record["name"]) for record in records}
+    additional_profiles = tuple(additional_profiles)
+    known_by_name = {str(record["name"]): record for record in records}
+
+    # Keep persisted handles stable while recognizing the default-handle rename
+    # during --expand-defaults. A signature check prevents an unrelated custom
+    # profile that reused an old name from being mistaken for the old default.
+    aliases: dict[str, str] = {}
+    known_names = set(known_by_name)
     for profile in additional_profiles:
-        if profile.name not in known_names:
-            forum.register_agent(run_id, profile)
-            known_names.add(profile.name)
+        record = known_by_name.get(profile.name)
+        if record is not None:
+            if _record_signature(record) != _profile_signature(profile):
+                raise ValueError(
+                    f"profile {profile.name!r} already exists with different execution settings"
+                )
+            continue
+
+        legacy_name = _LEGACY_DEFAULT_HANDLES.get(profile.name)
+        legacy_record = known_by_name.get(legacy_name) if legacy_name else None
+        if (
+            legacy_record is not None
+            and _record_signature(legacy_record) == _profile_signature(profile)
+        ):
+            aliases[profile.name] = str(legacy_record["name"])
+            continue
+        if profile.name in known_names:
+            raise ValueError(f"duplicate additional profile name: {profile.name!r}")
+        forum.register_agent(run_id, profile)
+        known_names.add(profile.name)
     records = forum.list_agents(run_id)
-    wanted = set(profile_names or ())
+    requested = set(profile_names or ())
     known = {str(record["name"]) for record in records}
-    missing = wanted - known
+    missing = requested - known - set(aliases)
     if missing:
         raise ValueError(f"unknown profiles in run: {', '.join(sorted(missing))}")
+    wanted = {aliases.get(name, name) for name in requested}
     all_profiles = tuple(
         AgentProfile(
             name=str(record["name"]),

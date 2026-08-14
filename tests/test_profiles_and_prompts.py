@@ -33,6 +33,29 @@ class ProfilesAndPromptsTest(unittest.TestCase):
             self.assertFalse(hasattr(profile, "phase"))
             self.assertFalse(hasattr(profile, "mission"))
 
+    def test_default_handles_expose_model_family_without_effort(self) -> None:
+        self.assertEqual(
+            (
+                "luna-1",
+                "terra-1",
+                "terra-2",
+                "sol-1",
+                "sol-2",
+                "sol-3",
+                "daybreak-blue-1",
+                "daybreak-blue-2",
+                "sonnet-1",
+                "sonnet-2",
+                "opus-1",
+                "opus-2",
+                "opus-3",
+                "opus-4",
+                "opus-5",
+                "opus-6",
+            ),
+            tuple(profile.name for profile in default_profiles()),
+        )
+
     def test_agent_spec_parses_provider_aliases_counts_and_names(self) -> None:
         profiles = parse_agent_spec("gpt:gpt-daybreak-blue-latest:high:2")
         self.assertEqual(2, len(profiles))
@@ -40,7 +63,7 @@ class ProfilesAndPromptsTest(unittest.TestCase):
         self.assertEqual("gpt-daybreak-blue-latest", profiles[0].model)
         self.assertEqual(Effort.HIGH, profiles[0].effort)
         self.assertEqual(
-            ["gpt-daybreak-blue-latest-high", "gpt-daybreak-blue-latest-high-2"],
+            ["gpt-daybreak-blue-latest-1", "gpt-daybreak-blue-latest-2"],
             [profile.name for profile in profiles],
         )
         (claude,) = parse_agent_spec("claude:opus:max")
@@ -69,13 +92,13 @@ effort = "max"
                 encoding="utf-8",
             )
             loaded = load_profiles_file(path)
-            self.assertEqual(["blue", "blue-2", "opus-max"], [p.name for p in loaded])
+            self.assertEqual(["blue", "blue-2", "opus-1"], [p.name for p in loaded])
 
             combined = resolve_profiles(
                 specs=["openai:gpt-5.6-sol:xhigh"], profiles_file=path
             )
             self.assertEqual(4, len(combined))
-            self.assertEqual("gpt-5-6-sol-xhigh", combined[-1].name)
+            self.assertEqual("gpt-5-6-sol-1", combined[-1].name)
 
             filtered = resolve_profiles(names=["blue-2"], profiles_file=path)
             self.assertEqual(("blue-2",), tuple(p.name for p in filtered))
@@ -99,6 +122,7 @@ effort = "max"
         self.assertIn("@all", prompt)
         self.assertIn("@human", prompt)
         self.assertIn("forum retire", prompt)
+        self.assertIn("independent promising path", prompt)
         self.assertNotIn(profile.model, prompt)
         self.assertNotIn(peer.model, prompt)
         self.assertNotIn(profile.provider.value, prompt)

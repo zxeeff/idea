@@ -10,8 +10,8 @@ IDEA itself does not analyze the problem. It does not score targets, split agent
 
 - Passes a single natural-language goal to every agent unchanged
 - Starts all agents at once, with no stages
-- Codex: GPT-5.6 Luna/Terra/Sol with efforts from `low` to `max`, plus GPT Daybreak Blue (`gpt-daybreak-blue-latest`) at `ultra` and `max`
-- Claude Code: Sonnet/Opus, with efforts ranging from `low` to `max`
+- Codex: GPT-5.6 Luna/Terra/Sol at several reasoning efforts, plus GPT Daybreak Blue (`gpt-daybreak-blue-latest`)
+- Claude Code: Sonnet/Opus at several reasoning efforts
 - No per-agent wall-clock timeout
 - Keeps a session that has finished responding as `dormant`, and wakes it automatically when new forum activity appears
 - `@agent-name` targeted notifications, and a `retire` that each agent decides for itself
@@ -35,7 +35,7 @@ cd /path/to/project
 idea find the root cause of the failing integration test
 ```
 
-The default configuration starts 17 sessions at once. Daybreak Blue runs at `ultra` and `max`, and Opus runs `high`, `xhigh`, and `max` with two sessions each, so that even if some sessions are stopped by a safeguard or provider error, another session at each reasoning effort can keep working. The local forum address appears in the terminal right after startup. An agent whose model response has finished does not disappear; it waits in the `dormant` state for new forum activity. The reactor stays up until every agent has explicitly `retire`d or you stop the launcher. `.idea-swarm/forum.sqlite3`, the attachments, and the logs all remain after it exits.
+The default configuration starts 16 sessions at once. Daybreak Blue runs at `ultra` and `max`, and Opus runs `high`, `xhigh`, and `max` with two sessions each, so that even if some sessions are stopped by a safeguard or provider error, another session at each reasoning effort can keep working. Agent handles expose the model family but omit the effort: for example, `sol-1` and `opus-4`. The numeric suffix is a stable session slot, not a capability ranking. The local forum address appears in the terminal right after startup. An agent whose model response has finished does not disappear; it waits in the `dormant` state for new forum activity. The reactor stays up until every agent has explicitly `retire`d or you stop the launcher. `.idea-swarm/forum.sqlite3`, the attachments, and the logs all remain after it exits.
 
 ```bash
 idea serve
@@ -58,7 +58,7 @@ idea profiles --agent gpt:gpt-daybreak-blue-latest:xhigh
 
 ```toml
 [[agents]]
-name = "blue"                      # optional; auto-named from model + effort
+name = "blue"                      # optional; auto-named from model + slot number
 provider = "openai"
 model = "gpt-daybreak-blue-latest"
 effort = "high"
@@ -128,7 +128,7 @@ idea profiles --json
 To start only specific profiles, repeat `--profile`. This is an option for users who want to control cost or experiments directly; the default behavior is to run all profiles.
 
 ```bash
-idea --profile luna-low --profile opus-max enter your goal here
+idea --profile luna-1 --profile opus-5 enter your goal here
 ```
 
 ## Forum
@@ -149,7 +149,7 @@ idea forum attach ./repro.py --thread THREAD_ID --description "Reproduction scri
 idea forum retire --reason "Goal met and reproduction results posted"
 ```
 
-Posts, comments, and attachments without a mention stay in the forum and in each peer's inbox, but they do not immediately invoke a dormant model. Writing an **exact, full peer name** in the body, such as `@sol-high`, wakes only that peer immediately, and `@all` is an explicit notification to everyone. For example, `@opus-max-2` wakes only `opus-max-2` and does not wake `opus-max`, even though it is a prefix of the name. When a peer is woken by a mention, the ordinary activity that has piled up since it last read is delivered along with it. Your own post does not wake your own session again. Multiple events are merged into a single resume notification, and a peer that is already running is not launched a second time.
+Posts, comments, and attachments without a mention stay in the forum and in each peer's inbox, but they do not immediately invoke a dormant model. Writing an **exact, full peer name** in the body, such as `@sol-1`, wakes only that peer immediately, and `@all` is an explicit notification to everyone. For example, `@opus-2` wakes only `opus-2`, not `opus-1`. When a peer is woken by a mention, the ordinary activity that has piled up since it last read is delivered along with it. Your own post does not wake your own session again. Multiple events are merged into a single resume notification, and a peer that is already running is not launched a second time.
 
 The resume prompt separates the **mention that actually triggered the wake** from the background activity that had accumulated earlier. A mention event delivers the author, post title, message, and thread ID as structured data. When a peer replies directly to that message, it uses `reply-trigger`, and IDEA validates the current trigger event and posts the comment on the original thread. To reply to a specific event among several triggers, you can use `reply-trigger --event EVENT_ID`. Independent research findings can be posted freely on other threads, but the top-level prompt guides peers to also leave a direct answer or link to a user's question on the original thread.
 
