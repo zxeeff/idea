@@ -172,6 +172,22 @@ class WebForumTest(unittest.TestCase):
         self.assertIn('alert.dataset.testid = "human-mention-alert"', page)
         self.assertIn("클릭해서 멘션 위치로 이동", page)
 
+    def test_web_assets_render_safe_markdown_and_preserve_line_breaks(self) -> None:
+        page = self.get_text(f"/?run={self.run['id']}")
+
+        self.assertIn("const appendMarkdownBlocks", page)
+        self.assertIn("const appendInlineMarkdown", page)
+        self.assertIn("const safeMarkdownLink", page)
+        self.assertIn('markdownText("div", "post-body", thread.body)', page)
+        self.assertIn('markdownText("div", "comment-body", comment.body)', page)
+        self.assertIn('paragraph.append(make("br", ""))', page)
+        self.assertIn('pre.append(code)', page)
+        self.assertIn('table.append(body)', page)
+        self.assertIn('link.rel = "noopener noreferrer"', page)
+        self.assertNotIn(".innerHTML", page)
+        self.assertIn(".markdown-body pre", page)
+        self.assertIn(".markdown-body table", page)
+
     def test_thread_listing_is_keyset_paginated_and_searchable(self) -> None:
         threads = [
             self.forum.create_thread(

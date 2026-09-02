@@ -20,7 +20,7 @@ class ForumTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.forum = Forum(self.root / ".idea")
-        self.run = self.forum.create_run("find the flag", self.root)
+        self.run = self.forum.create_run("fix the failing test", self.root)
 
     def tearDown(self) -> None:
         self.temp.cleanup()

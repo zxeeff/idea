@@ -38,7 +38,7 @@ class LauncherAndProvidersTest(unittest.TestCase):
             )
             prepared = prepare_run(
                 forum=forum,
-                goal="get the flag",
+                goal="fix the failing test",
                 workspace=workspace,
                 profiles=profiles,
             )
@@ -55,7 +55,12 @@ class LauncherAndProvidersTest(unittest.TestCase):
             codex_system = next(
                 value for value in codex if value.startswith("developer_instructions=")
             )
-            self.assertIn("free-form forum", codex_system)
+            self.assertIn("forum --help", codex_system)
+            self.assertNotIn("fix the failing test", codex_system)
+            self.assertNotIn("gpt-5.6-luna", codex_system)
+            self.assertNotIn("effort", codex_system.casefold())
+            self.assertNotIn(str(workspace.resolve()), codex_system)
+            self.assertEqual(1, codex[-1].count("fix the failing test"))
 
             claude = prepared.peers[1].invocation.argv
             self.assertIn("opus", claude)
@@ -63,7 +68,12 @@ class LauncherAndProvidersTest(unittest.TestCase):
             self.assertIn("--dangerously-skip-permissions", claude)
             self.assertNotIn("--permission-mode", claude)
             claude_system = claude[claude.index("--append-system-prompt") + 1]
-            self.assertIn("free-form forum", claude_system)
+            self.assertIn("forum --help", claude_system)
+            self.assertNotIn("fix the failing test", claude_system)
+            self.assertNotIn("opus", claude_system)
+            self.assertNotIn("effort", claude_system.casefold())
+            self.assertNotIn(str(workspace.resolve()), claude_system)
+            self.assertEqual(1, claude[-1].count("fix the failing test"))
 
             forum.set_process_state(
                 prepared.peers[0].agent["id"],
@@ -223,14 +233,8 @@ class LauncherAndProvidersTest(unittest.TestCase):
             workspace = Path(directory).resolve()
             forum = Forum(workspace / ".idea")
             current = default_profiles()
-            introduced = {
-                "sol-high",
-                "sol-max-2",
-                "opus-high",
-                "opus-high-2",
-                "opus-xhigh-2",
-                "opus-max-2",
-            }
+            # Simulate an older run created before every other profile existed.
+            introduced = {profile.name for profile in current[1::2]}
             previous_defaults = tuple(
                 profile for profile in current if profile.name not in introduced
             )
@@ -247,7 +251,86 @@ class LauncherAndProvidersTest(unittest.TestCase):
             )
             names = {peer.profile.name for peer in expanded.peers}
             self.assertTrue(introduced <= names)
-            self.assertEqual(16, len(forum.list_agents(prepared.run["id"])))
+            self.assertEqual(len(current), len(forum.list_agents(prepared.run["id"])))
+
+    def test_expanding_a_legacy_run_does_not_duplicate_renamed_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory).resolve()
+            forum = Forum(workspace / ".idea")
+            current = default_profiles()
+            legacy = (
+                AgentProfile("luna-medium", Provider.OPENAI, "gpt-5.6-luna", Effort.MEDIUM),
+                AgentProfile("terra-medium", Provider.OPENAI, "gpt-5.6-terra", Effort.MEDIUM),
+                AgentProfile("terra-high", Provider.OPENAI, "gpt-5.6-terra", Effort.HIGH),
+                AgentProfile("sol-high", Provider.OPENAI, "gpt-5.6-sol", Effort.HIGH),
+                AgentProfile("sol-xhigh", Provider.OPENAI, "gpt-5.6-sol", Effort.XHIGH),
+                AgentProfile("sol-max", Provider.OPENAI, "gpt-5.6-sol", Effort.MAX),
+                AgentProfile(
+                    "daybreak-ultra",
+                    Provider.OPENAI,
+                    "gpt-daybreak-blue-latest",
+                    Effort.ULTRA,
+                ),
+                AgentProfile(
+                    "daybreak-max",
+                    Provider.OPENAI,
+                    "gpt-daybreak-blue-latest",
+                    Effort.MAX,
+                ),
+                AgentProfile("sonnet-medium", Provider.ANTHROPIC, "sonnet", Effort.MEDIUM),
+                AgentProfile("sonnet-high", Provider.ANTHROPIC, "sonnet", Effort.HIGH),
+                AgentProfile("opus-high", Provider.ANTHROPIC, "opus", Effort.HIGH),
+                AgentProfile("opus-high-2", Provider.ANTHROPIC, "opus", Effort.HIGH),
+                AgentProfile("opus-xhigh", Provider.ANTHROPIC, "opus", Effort.XHIGH),
+                AgentProfile("opus-xhigh-2", Provider.ANTHROPIC, "opus", Effort.XHIGH),
+                AgentProfile("opus-max", Provider.ANTHROPIC, "opus", Effort.MAX),
+                AgentProfile("opus-max-2", Provider.ANTHROPIC, "opus", Effort.MAX),
+            )
+            prepared = prepare_run(
+                forum=forum,
+                goal="goal",
+                workspace=workspace,
+                profiles=legacy,
+            )
+
+            expanded = prepare_resume(
+                forum=forum,
+                run_id=prepared.run["id"],
+                profile_names=("sol-1",),
+                additional_profiles=current,
+            )
+
+            self.assertEqual(("sol-high",), tuple(peer.profile.name for peer in expanded.peers))
+            self.assertEqual(len(legacy), len(forum.list_agents(prepared.run["id"])))
+
+    def test_expansion_does_not_alias_an_unrelated_name_with_the_same_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory).resolve()
+            forum = Forum(workspace / ".idea")
+            luna = default_profiles()[0]
+            custom = AgentProfile(
+                "my-specialist",
+                luna.provider,
+                luna.model,
+                luna.effort,
+            )
+            prepared = prepare_run(
+                forum=forum,
+                goal="goal",
+                workspace=workspace,
+                profiles=(custom,),
+            )
+
+            prepare_resume(
+                forum=forum,
+                run_id=prepared.run["id"],
+                additional_profiles=(luna,),
+            )
+
+            self.assertEqual(
+                {"my-specialist", "luna-1"},
+                {str(record["name"]) for record in forum.list_agents(prepared.run["id"])},
+            )
 
     def test_reactor_wakes_a_fast_dormant_peer_after_slow_peer_posts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -259,7 +342,7 @@ class LauncherAndProvidersTest(unittest.TestCase):
             )
             prepared = prepare_run(
                 forum=forum,
-                goal="get the flag",
+                goal="fix the failing test",
                 workspace=workspace,
                 profiles=profiles,
             )

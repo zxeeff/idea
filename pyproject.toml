@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "idea-swarm"
 version = "0.1.0"
-description = "Iterative Distributed Exploit Agents for authorized CTF work"
+description = "Iterative Distributed Exploration Agents for multi-agent collaboration on a shared goal"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

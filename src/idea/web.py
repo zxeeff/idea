@@ -185,17 +185,30 @@ def _public_thread(thread: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _author_hue(name: str) -> int:
+    """Mirror the deterministic per-author hue used by the browser script."""
+    normalized = name.strip().lower()
+    if normalized in {"human", "user"}:
+        return 270
+    value = 0
+    for character in normalized:
+        value = (value * 31 + ord(character)) & 0xFFFFFFFF
+    return value % 360
+
+
 def _peer_html(agent: dict[str, Any]) -> str:
     reason = (
         f'<div class="peer-reason">{_e(agent["retire_reason"])}</div>'
         if agent.get("retire_reason")
         else ""
     )
+    hue = _author_hue(str(agent["name"]))
     return (
-        '<div class="peer">'
+        f'<div class="peer" data-peer-name="{_e(agent["name"])}" '
+        f'title="클릭하면 @{_e(agent["name"])} 태그">'
         f'<span class="state-dot state-{_e(agent["process_state"])}"></span>'
         '<div>'
-        f'<div class="peer-name">{_e(agent["name"])}</div>'
+        f'<div class="peer-name" style="color:hsl({hue} 60% 74%)">{_e(agent["name"])}</div>'
         f'<div class="peer-meta">{_e(agent["model"])} · {_e(agent["effort"])} · '
         f'{_e(agent["process_state"])}</div>{reason}</div></div>'
     )
@@ -216,30 +229,44 @@ def render_login_page(next_path: str = "/", *, error: bool = False) -> str:
 * {{ box-sizing: border-box; }}
 body {{
   min-height: 100dvh; margin: 0; display: grid; place-items: center; padding: 24px;
-  background: #090d13; color: #e8edf3;
+  background:
+    radial-gradient(900px 480px at 85% -10%, #14263f66, transparent 62%),
+    radial-gradient(760px 420px at -10% 110%, #12302044, transparent 60%),
+    #0a0f16;
+  color: #e9eef5;
   font: 14px/1.55 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }}
 .card {{
-  width: min(100%, 390px); padding: 28px; border: 1px solid #283241;
-  border-radius: 12px; background: #111720; box-shadow: 0 18px 50px #0005;
+  width: min(100%, 390px); padding: 30px; border: 1px solid #1f2a3a;
+  border-radius: 14px; background: #101724; box-shadow: 0 18px 50px #0006;
 }}
-.eyebrow {{ color: #7ee787; font-size: 11px; font-weight: 800; letter-spacing: .12em; }}
-h1 {{ margin: 5px 0 4px; font-size: 22px; }}
-.hint, .error {{ margin: 0 0 20px; color: #91a0b3; }}
+.eyebrow {{
+  display: flex; align-items: center; gap: 8px;
+  color: #7ee787; font-size: 11px; font-weight: 800; letter-spacing: .12em;
+}}
+.eyebrow::before {{
+  content: ""; width: 10px; height: 10px; border-radius: 3px;
+  background: linear-gradient(135deg, #7ee787, #79b8ff);
+  transform: rotate(45deg) scale(.92);
+}}
+h1 {{ margin: 10px 0 4px; font-size: 22px; font-weight: 800; letter-spacing: -.01em; }}
+.hint, .error {{ margin: 0 0 20px; color: #94a3b8; }}
 .error {{ color: #ff7b72; }}
-label {{ display: block; margin-bottom: 7px; color: #91a0b3; font-size: 12px; }}
+label {{ display: block; margin-bottom: 7px; color: #94a3b8; font-size: 12px; }}
 input {{
-  width: 100%; padding: 11px 12px; border: 1px solid #3a4759; border-radius: 7px;
-  outline: none; background: #0d121a; color: #e8edf3; font: inherit;
+  width: 100%; padding: 11px 12px; border: 1px solid #35455c; border-radius: 8px;
+  outline: none; background: #070b11; color: #e9eef5; font: inherit;
+  transition: border-color .12s, box-shadow .12s;
 }}
-input:focus {{ border-color: #73b7ff; box-shadow: 0 0 0 3px #73b7ff22; }}
+input:focus {{ border-color: #79b8ff; box-shadow: 0 0 0 3px #79b8ff22; }}
 button {{
-  width: 100%; margin-top: 13px; padding: 10px 14px; border: 1px solid #7ee787;
-  border-radius: 7px; background: #173620; color: #e8edf3; cursor: pointer;
-  font: inherit; font-weight: 700;
+  width: 100%; margin-top: 14px; padding: 11px 14px; border: 1px solid #2f8144;
+  border-radius: 8px; background: #16301f; color: #7ee787; cursor: pointer;
+  font: inherit; font-weight: 700; transition: background .12s, border-color .12s;
 }}
-button:hover {{ background: #21492b; }}
+button:hover {{ border-color: #7ee787; background: #1c3d27; }}
 </style></head><body>
 <main class="card">
   <div class="eyebrow">IDEA / FORUM</div>
@@ -311,7 +338,9 @@ def render_page(forum: Forum, run_id: str) -> str:
       </div>
     </section>
     <section class="side-section">
-      <h2 class="section-title">Peers <span>{len(agents)}</span></h2>
+      <h2 class="section-title"><span>Peers {len(agents)}</span>
+        <button id="tag-all" class="mention-chip" type="button"
+          title="모든 비활성 peer를 깨우는 @all 태그">@all</button></h2>
       <div id="peer-list">{peer_html}</div>
     </section>
     <section class="side-section">

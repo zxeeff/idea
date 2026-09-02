@@ -4,34 +4,49 @@ from __future__ import annotations
 CSS = r"""
 :root {
   color-scheme: dark;
-  --bg: #090d13;
-  --panel: #111720;
-  --panel-raised: #171e29;
-  --panel-soft: #0d121a;
-  --line: #283241;
-  --line-strong: #3a4759;
-  --text: #e8edf3;
-  --muted: #91a0b3;
-  --faint: #66758a;
+  --bg: #0a0f16;
+  --bg-deep: #070b11;
+  --panel: #101724;
+  --panel-raised: #182130;
+  --panel-soft: #0c1119;
+  --line: #1f2a3a;
+  --line-strong: #35455c;
+  --text: #e9eef5;
+  --muted: #94a3b8;
+  --faint: #64748b;
   --accent: #7ee787;
-  --accent-soft: #173620;
-  --blue: #73b7ff;
-  --blue-soft: #122b46;
+  --accent-soft: #16301f;
+  --blue: #79b8ff;
+  --blue-soft: #10263f;
   --amber: #e3b341;
+  --purple: #bd93f9;
   --red: #ff7b72;
-  --shadow: 0 18px 50px #0005;
+  --shadow: 0 18px 50px #0006;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #2c3a4e transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background: #2c3a4e;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: #405270; }
 [hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
   overflow: hidden;
-  background: var(--bg);
+  background:
+    radial-gradient(1100px 520px at 88% -12%, #14263f66, transparent 62%),
+    radial-gradient(900px 460px at -8% 112%, #12302044, transparent 60%),
+    var(--bg);
   color: var(--text);
   font: 14px/1.55 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 button, input, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
@@ -46,10 +61,20 @@ a:hover { text-decoration: underline; }
   gap: 24px;
   padding: 12px 22px;
   border-bottom: 1px solid var(--line);
-  background: #090d13f2;
+  background: linear-gradient(180deg, #0d1420f5, #0a0f16f2);
 }
 .brand-row { display: flex; align-items: baseline; gap: 11px; }
-.brand { margin: 0; font-size: 18px; letter-spacing: .04em; }
+.brand { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: .04em; }
+.brand::before {
+  content: "";
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 10px;
+  border-radius: 3px;
+  background: linear-gradient(135deg, var(--accent), var(--blue));
+  transform: translateY(1px) rotate(45deg) scale(.92);
+}
 .run-chip {
   max-width: 230px;
   overflow: hidden;
@@ -131,24 +156,38 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
   font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
 .stat {
-  padding: 8px 5px;
+  padding: 10px 5px 8px;
   border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--panel);
+  border-radius: 9px;
+  background: linear-gradient(180deg, var(--panel-raised), var(--panel));
   text-align: center;
 }
-.stat strong { display: block; font-size: 15px; }
-.stat span { color: var(--faint); font-size: 10px; }
+.stat strong { display: block; font-size: 17px; font-weight: 750; letter-spacing: .01em; }
+.stat span { color: var(--faint); font-size: 10px; letter-spacing: .05em; }
+#stat-threads { color: var(--accent); }
+#stat-comments { color: var(--blue); }
+#stat-files { color: var(--amber); }
 .peer {
   display: grid;
   grid-template-columns: 9px minmax(0, 1fr);
   gap: 8px;
-  padding: 8px 0;
+  margin: 0 -6px;
+  padding: 8px 6px;
   border-bottom: 1px solid #28324188;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background .12s;
 }
 .peer:last-child { border-bottom: 0; }
+.peer:hover { background: var(--panel-raised); }
+.peer:hover .peer-name::after {
+  content: " @태그";
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 500;
+}
 .state-dot { width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; }
 .state-running { background: var(--accent); box-shadow: 0 0 8px #7ee78766; }
 .state-dormant { background: var(--amber); }
@@ -190,25 +229,31 @@ a:hover { text-decoration: underline; }
 input, textarea {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 8px;
   outline: none;
-  background: var(--bg);
+  background: var(--bg-deep);
   color: var(--text);
-  padding: 9px 10px;
+  padding: 9px 11px;
+  transition: border-color .12s, box-shadow .12s;
 }
+input::placeholder, textarea::placeholder { color: var(--faint); }
 input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #58a6ff1c; }
 textarea { min-height: 92px; resize: vertical; }
 .button {
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--panel-raised);
   color: var(--text);
   cursor: pointer;
-  padding: 8px 11px;
+  padding: 8px 12px;
+  font-weight: 600;
+  transition: border-color .12s, background .12s, color .12s;
 }
 .button:hover { border-color: var(--blue); }
+.button:active { transform: translateY(1px); }
 .button.primary { border-color: #2f8144; background: var(--accent-soft); color: var(--accent); }
-.button.quiet { background: transparent; color: var(--muted); }
+.button.primary:hover { border-color: var(--accent); background: #1c3d27; }
+.button.quiet { background: transparent; color: var(--muted); font-weight: 500; }
 .new-activity {
   width: 100%;
   margin-top: 9px;
@@ -219,6 +264,20 @@ textarea { min-height: 92px; resize: vertical; }
 .composer { margin-top: 10px; }
 .composer summary { color: var(--blue); cursor: pointer; font-size: 12px; list-style-position: inside; }
 .composer-form { display: grid; gap: 7px; margin-top: 9px; }
+.mention-chip {
+  padding: 2px 9px;
+  border: 1px solid #946c1d88;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--amber);
+  cursor: pointer;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: border-color .12s, background .12s;
+}
+.mention-chip:hover { border-color: var(--amber); background: #3b2c0c; }
 .compact-row { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px; }
 .thread-list {
   flex: 1 1 auto;
@@ -230,26 +289,33 @@ textarea { min-height: 92px; resize: vertical; }
 .thread-card {
   width: 100%;
   display: block;
-  margin: 0 0 6px;
-  padding: 11px 12px;
+  margin: 0 0 7px;
+  padding: 12px 14px;
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text);
   cursor: pointer;
   text-align: left;
+  transition: background .12s, border-color .12s;
 }
-.thread-card:hover { background: var(--panel-raised); }
-.thread-card.selected { border-color: #2b669f; background: var(--blue-soft); }
+.thread-card:hover { border-color: var(--line); background: var(--panel-raised); }
+.thread-card.selected {
+  border-color: #2b669f;
+  background: var(--blue-soft);
+  box-shadow: inset 3px 0 0 0 var(--blue);
+}
 .thread-card-title { overflow-wrap: anywhere; font-weight: 700; line-height: 1.4; }
-.thread-card-meta { margin-top: 4px; color: var(--faint); font-size: 11px; }
+.thread-card-meta { margin-top: 5px; color: var(--faint); font-size: 11px; }
+.card-author { font-weight: 700; }
 .thread-preview {
   display: -webkit-box;
   margin-top: 6px;
   overflow: hidden;
   color: var(--muted);
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
@@ -265,12 +331,95 @@ textarea { min-height: 92px; resize: vertical; }
 }
 .reader-inner { width: min(900px, 100%); margin: 0 auto; padding: 30px clamp(20px, 4vw, 54px) 80px; }
 .reader-empty { display: grid; min-height: 70vh; place-items: center; color: var(--faint); text-align: center; }
-.thread-heading { margin: 0; overflow-wrap: anywhere; font-size: clamp(22px, 3vw, 32px); line-height: 1.24; }
-.post-meta { margin-top: 10px; color: var(--faint); font-size: 12px; }
-.post-body, .comment-body {
-  white-space: pre-wrap;
+.thread-heading {
+  margin: 0;
   overflow-wrap: anywhere;
-  font: 14px/1.72 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 800;
+  letter-spacing: -.015em;
+  line-height: 1.24;
+}
+.post-meta { margin-top: 10px; color: var(--faint); font-size: 12px; }
+.post-meta .card-author { font-size: 12.5px; }
+.post-body, .comment-body {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.72;
+}
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 1em; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4, .markdown-body h5, .markdown-body h6 {
+  margin: 1.35em 0 .55em;
+  color: #f3f6fa;
+  font-weight: 760;
+  line-height: 1.3;
+}
+.markdown-body h1 { font-size: 1.65em; }
+.markdown-body h2 { padding-bottom: .25em; border-bottom: 1px solid var(--line); font-size: 1.4em; }
+.markdown-body h3 { font-size: 1.2em; }
+.markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 1em; }
+.markdown-body ul, .markdown-body ol { margin: .5em 0 1em; padding-left: 1.7em; }
+.markdown-body li { margin: .2em 0; padding-left: .15em; }
+.markdown-body li::marker { color: var(--muted); }
+.markdown-body blockquote {
+  margin: .8em 0 1em;
+  padding: .15em 1em;
+  border-left: 3px solid #42688e;
+  color: var(--muted);
+}
+.markdown-body code {
+  padding: .12em .34em;
+  border: 1px solid #2b384b;
+  border-radius: 5px;
+  background: #151d29;
+  color: #dce8f5;
+  font: .92em/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.markdown-body pre {
+  margin: .8em 0 1.1em;
+  overflow-x: auto;
+  padding: 13px 15px;
+  border: 1px solid #293649;
+  border-radius: 9px;
+  background: #080d14;
+  scrollbar-gutter: stable;
+}
+.markdown-body pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: pre;
+  overflow-wrap: normal;
+  color: #d7e1ec;
+}
+.markdown-body hr { margin: 1.25em 0; border: 0; border-top: 1px solid var(--line-strong); }
+.markdown-body table {
+  width: 100%;
+  margin: .8em 0 1.1em;
+  border-collapse: collapse;
+  font-size: .95em;
+}
+.markdown-body th, .markdown-body td {
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-body th { background: var(--panel-raised); font-weight: 720; }
+.markdown-body tbody tr:nth-child(even) { background: #ffffff05; }
+.markdown-body del { color: var(--faint); }
+.markdown-body .task-checkbox { margin: 0 .45em 0 0; accent-color: var(--accent); }
+.markdown-body a { overflow-wrap: anywhere; }
+.markdown-body .markdown-raw-link { color: var(--muted); }
+.markdown-body .markdown-language {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--faint);
+  font: 10px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .04em;
+  text-transform: uppercase;
 }
 .mention {
   padding: .08em .36em;
@@ -301,14 +450,48 @@ textarea { min-height: 92px; resize: vertical; }
   color: #8795a8;
 }
 .post-body { margin-top: 26px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
-.attachment-block { margin-top: 22px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.attachment-block { margin-top: 22px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .attachment { padding: 5px 0; }
 .attachment-meta { display: block; color: var(--faint); font-size: 11px; }
-.comments-heading { margin: 32px 0 13px; font-size: 15px; }
-.comment { margin: 0 0 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
-.comment-author { font-weight: 700; }
+.comments-heading { margin: 32px 0 14px; font-size: 15px; }
+.comment {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  column-gap: 12px;
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.avatar {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid hsl(var(--avatar-hue, 210) 45% 34% / .8);
+  border-radius: 9px;
+  background: hsl(var(--avatar-hue, 210) 45% 19%);
+  color: hsl(var(--avatar-hue, 210) 85% 78%);
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  user-select: none;
+}
+.comment > .avatar { grid-row: 1; margin-top: 1px; }
+.comment-heading { align-self: center; min-width: 0; }
+.comment-author { font-weight: 700; color: hsl(var(--avatar-hue, 210) 75% 76%); }
+.tag-author {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tag-author:hover { text-decoration: underline; }
 .comment-time { margin-left: 7px; color: var(--faint); font-size: 11px; }
-.comment-body { margin-top: 9px; }
+.comment-body { grid-column: 2; margin-top: 8px; }
 .mention-focus {
   outline: 2px solid #bd93f9;
   outline-offset: 4px;
@@ -488,6 +671,7 @@ JAVASCRIPT = r"""
     mentionIds: new Set(),
     polling: false,
     toastTimer: null,
+    activeComposer: null,
   };
 
   const make = (tag, className, text) => {
@@ -538,6 +722,337 @@ JAVASCRIPT = r"""
 
   const richText = (tag, className, text) =>
     appendMentionText(make(tag, className), text);
+
+  const safeMarkdownLink = (rawValue) => {
+    const value = String(rawValue || "").trim();
+    if (/^(https?:|mailto:)/i.test(value)) return value;
+    if (/^(?:#|\?|\/(?!\/)|\.\.?\/)/.test(value)) return value;
+    return null;
+  };
+
+  const appendInlineMarkdown = (node, rawText, depth = 0) => {
+    let value = String(rawText || "");
+    if (depth > 8) return appendMentionText(node, value);
+    const rules = [
+      {
+        pattern: /`([^`\n]+)`/u,
+        render: (match) => make("code", "", match[1]),
+      },
+      {
+        pattern: /\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/u,
+        render: (match) => {
+          const href = safeMarkdownLink(match[2]);
+          if (!href) return make("span", "markdown-raw-link", match[0]);
+          const link = make("a", "");
+          link.href = href;
+          if (match[3]) link.title = match[3];
+          if (/^https?:/i.test(href)) {
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+          }
+          appendInlineMarkdown(link, match[1], depth + 1);
+          return link;
+        },
+      },
+      {
+        pattern: /\*\*([^*\n]+)\*\*/u,
+        render: (match) => {
+          const strong = make("strong", "");
+          appendInlineMarkdown(strong, match[1], depth + 1);
+          return strong;
+        },
+      },
+      {
+        pattern: /__([^_\n]+)__/u,
+        render: (match) => {
+          const strong = make("strong", "");
+          appendInlineMarkdown(strong, match[1], depth + 1);
+          return strong;
+        },
+      },
+      {
+        pattern: /~~([^~\n]+)~~/u,
+        render: (match) => {
+          const deleted = make("del", "");
+          appendInlineMarkdown(deleted, match[1], depth + 1);
+          return deleted;
+        },
+      },
+      {
+        pattern: /\*([^*\n]+)\*/u,
+        render: (match) => {
+          const emphasis = make("em", "");
+          appendInlineMarkdown(emphasis, match[1], depth + 1);
+          return emphasis;
+        },
+      },
+      {
+        pattern: /_([^_\n]+)_/u,
+        render: (match) => {
+          const emphasis = make("em", "");
+          appendInlineMarkdown(emphasis, match[1], depth + 1);
+          return emphasis;
+        },
+      },
+    ];
+
+    while (value) {
+      let selected = null;
+      for (const rule of rules) {
+        const match = rule.pattern.exec(value);
+        if (match && (!selected || match.index < selected.match.index)) {
+          selected = { rule, match };
+        }
+      }
+      if (!selected) {
+        appendMentionText(node, value);
+        break;
+      }
+      if (selected.match.index) {
+        appendMentionText(node, value.slice(0, selected.match.index));
+      }
+      node.append(selected.rule.render(selected.match));
+      value = value.slice(selected.match.index + selected.match[0].length);
+    }
+    return node;
+  };
+
+  const splitMarkdownRow = (line) => {
+    const cells = [];
+    let cell = "";
+    const value = String(line).trim();
+    for (let index = 0; index < value.length; index += 1) {
+      const character = value[index];
+      if (character === "\\" && ["\\", "|"].includes(value[index + 1])) {
+        cell += value[index + 1];
+        index += 1;
+      } else if (character === "|") {
+        cells.push(cell.trim());
+        cell = "";
+      } else {
+        cell += character;
+      }
+    }
+    cells.push(cell.trim());
+    if (cells[0] === "") cells.shift();
+    if (cells.at(-1) === "") cells.pop();
+    return cells;
+  };
+
+  const tableSeparator = (line) => {
+    const cells = splitMarkdownRow(line);
+    return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  };
+
+  const markdownBlockStart = (lines, index) => {
+    const line = lines[index] || "";
+    if (!line.trim()) return true;
+    if (/^ {0,3}(`{3,}|~{3,})/.test(line)) return true;
+    if (/^ {0,3}#{1,6}\s+/.test(line)) return true;
+    if (/^ {0,3}>\s?/.test(line)) return true;
+    if (/^\s*(?:[-+*]|\d+[.)])\s+/.test(line)) return true;
+    if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return true;
+    return index + 1 < lines.length && line.includes("|") && tableSeparator(lines[index + 1]);
+  };
+
+  const appendMarkdownBlocks = (node, rawText) => {
+    const lines = String(rawText || "").replace(/\r\n?/g, "\n").split("\n");
+    let index = 0;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (!line.trim()) {
+        index += 1;
+        continue;
+      }
+
+      const fence = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)\s*$/.exec(line);
+      if (fence) {
+        const marker = fence[1];
+        const language = fence[2];
+        const content = [];
+        index += 1;
+        while (index < lines.length && !new RegExp(`^ {0,3}${marker[0]}{${marker.length},}\\s*$`).test(lines[index])) {
+          content.push(lines[index]);
+          index += 1;
+        }
+        if (index < lines.length) index += 1;
+        const pre = make("pre", "");
+        if (language) pre.append(make("span", "markdown-language", language));
+        const code = make("code", language ? `language-${language.replace(/[^a-z0-9_-]/gi, "")}` : "", content.join("\n"));
+        pre.append(code);
+        node.append(pre);
+        continue;
+      }
+
+      const heading = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+      if (heading) {
+        const headingNode = make(`h${heading[1].length}`, "");
+        appendInlineMarkdown(headingNode, heading[2]);
+        node.append(headingNode);
+        index += 1;
+        continue;
+      }
+
+      if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+        node.append(make("hr", ""));
+        index += 1;
+        continue;
+      }
+
+      if (index + 1 < lines.length && line.includes("|") && tableSeparator(lines[index + 1])) {
+        const headers = splitMarkdownRow(line);
+        const separators = splitMarkdownRow(lines[index + 1]);
+        const table = make("table", "");
+        const head = make("thead", "");
+        const headRow = make("tr", "");
+        headers.forEach((header, column) => {
+          const cell = make("th", "");
+          const separator = separators[column] || "";
+          cell.style.textAlign = separator.startsWith(":") && separator.endsWith(":")
+            ? "center" : (separator.endsWith(":") ? "right" : "left");
+          appendInlineMarkdown(cell, header);
+          headRow.append(cell);
+        });
+        head.append(headRow);
+        table.append(head);
+        const body = make("tbody", "");
+        index += 2;
+        while (index < lines.length && lines[index].trim() && lines[index].includes("|")) {
+          const row = make("tr", "");
+          const values = splitMarkdownRow(lines[index]);
+          headers.forEach((_header, column) => {
+            const cell = make("td", "");
+            cell.style.textAlign = headRow.children[column].style.textAlign;
+            appendInlineMarkdown(cell, values[column] || "");
+            row.append(cell);
+          });
+          body.append(row);
+          index += 1;
+        }
+        table.append(body);
+        node.append(table);
+        continue;
+      }
+
+      if (/^ {0,3}>\s?/.test(line)) {
+        const quoteLines = [];
+        while (index < lines.length && (/^ {0,3}>\s?/.test(lines[index]) || !lines[index].trim())) {
+          quoteLines.push(lines[index].replace(/^ {0,3}>\s?/, ""));
+          index += 1;
+        }
+        const quote = make("blockquote", "");
+        appendMarkdownBlocks(quote, quoteLines.join("\n"));
+        node.append(quote);
+        continue;
+      }
+
+      const listMatch = /^\s*([-+*]|\d+[.)])\s+(.+)$/.exec(line);
+      if (listMatch) {
+        const ordered = /^\d/.test(listMatch[1]);
+        const list = make(ordered ? "ol" : "ul", "");
+        if (ordered) list.start = Number.parseInt(listMatch[1], 10);
+        while (index < lines.length) {
+          const itemMatch = /^\s*([-+*]|\d+[.)])\s+(.+)$/.exec(lines[index]);
+          if (!itemMatch || /^\d/.test(itemMatch[1]) !== ordered) break;
+          const item = make("li", "");
+          const task = /^\[([ xX])\]\s+(.*)$/.exec(itemMatch[2]);
+          if (task) {
+            const checkbox = make("input", "task-checkbox");
+            checkbox.type = "checkbox";
+            checkbox.checked = task[1].toLocaleLowerCase("en-US") === "x";
+            checkbox.disabled = true;
+            item.append(checkbox);
+            appendInlineMarkdown(item, task[2]);
+          } else {
+            appendInlineMarkdown(item, itemMatch[2]);
+          }
+          list.append(item);
+          index += 1;
+        }
+        node.append(list);
+        continue;
+      }
+
+      const paragraphLines = [line];
+      index += 1;
+      while (index < lines.length && !markdownBlockStart(lines, index)) {
+        paragraphLines.push(lines[index]);
+        index += 1;
+      }
+      const paragraph = make("p", "");
+      paragraphLines.forEach((paragraphLine, lineIndex) => {
+        if (lineIndex) paragraph.append(make("br", ""));
+        appendInlineMarkdown(paragraph, paragraphLine);
+      });
+      node.append(paragraph);
+    }
+    return node;
+  };
+
+  const markdownText = (tag, className, text) =>
+    appendMarkdownBlocks(make(tag, `${className} markdown-body`), text);
+
+  // Deterministic per-author hue so each agent keeps one color everywhere.
+  const authorHue = (author) => {
+    const name = String(author || "").trim().toLocaleLowerCase("en-US");
+    if (name === "human" || name === "user") return 270;
+    let hash = 0;
+    for (let index = 0; index < name.length; index += 1) {
+      hash = (hash * 31 + name.charCodeAt(index)) >>> 0;
+    }
+    return hash % 360;
+  };
+
+  const avatarNode = (author) => {
+    const initial = (String(author || "?").trim()[0] || "?");
+    const badge = make("span", "avatar", initial);
+    badge.setAttribute("aria-hidden", "true");
+    return badge;
+  };
+
+  const authorChip = (author) => {
+    const chip = make("span", "card-author", author);
+    chip.style.color = `hsl(${authorHue(author)} 65% 72%)`;
+    return chip;
+  };
+
+  // Tagging happens from the sidebar: clicking a peer (or @all) drops the
+  // mention into whichever composer the user touched last.
+  const insertMention = (textarea, token) => {
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    const before = textarea.value.slice(0, start);
+    const insertion = `${before && !/\s$/.test(before) ? " " : ""}${token} `;
+    textarea.value = before + insertion + textarea.value.slice(end);
+    const caret = before.length + insertion.length;
+    textarea.focus();
+    textarea.setSelectionRange(caret, caret);
+  };
+
+  const composerTarget = () => {
+    if (state.activeComposer && state.activeComposer.isConnected) {
+      return state.activeComposer;
+    }
+    const replyBody = document.querySelector("#reply-form textarea");
+    if (replyBody) return replyBody;
+    const form = document.getElementById("new-thread-form");
+    form.closest("details").open = true;
+    return form.elements.body;
+  };
+
+  const tagIntoComposer = (token) => {
+    insertMention(composerTarget(), token);
+    showToast(`${token} 태그를 입력창에 추가했습니다.`);
+  };
+
+  const authorTagButton = (author, className) => {
+    const chip = make("button", `${className} tag-author`, author);
+    chip.type = "button";
+    chip.style.color = `hsl(${authorHue(author)} 65% 72%)`;
+    chip.title = `클릭하면 @${author} 태그`;
+    chip.addEventListener("click", () => tagIntoComposer(`@${author}`));
+    return chip;
+  };
 
   const timeText = (value) => {
     if (!value) return "";
@@ -626,6 +1141,9 @@ JAVASCRIPT = r"""
     renderHumanMentions();
   };
 
+  // Alerts left unread for too long dismiss themselves.
+  const MENTION_ALERT_TTL_MS = 10 * 60 * 1000;
+
   const enqueueHumanMentions = (items) => {
     for (const item of items || []) {
       const eventId = Number(item.id);
@@ -635,10 +1153,23 @@ JAVASCRIPT = r"""
         || state.mentionIds.has(eventId)
       ) continue;
       state.mentionIds.add(eventId);
-      state.mentionItems.push({ ...item, id: eventId });
+      state.mentionItems.push({
+        ...item,
+        id: eventId,
+        expiresAt: Date.now() + MENTION_ALERT_TTL_MS,
+      });
     }
     state.mentionItems.sort((left, right) => left.id - right.id);
     renderHumanMentions();
+  };
+
+  const expireHumanMentions = () => {
+    const now = Date.now();
+    const expired = state.mentionItems.filter((item) => item.expiresAt <= now);
+    if (!expired.length) return;
+    // Items expire in id order (same TTL, enqueued in order), so marking the
+    // newest expired id read clears exactly the expired prefix.
+    markHumanMentionRead(Math.max(...expired.map((item) => item.id)));
   };
 
   const advanceMentionCursor = (cursor) => {
@@ -674,7 +1205,10 @@ JAVASCRIPT = r"""
       card.setAttribute("aria-label", `${item.title} 열기`);
       card.append(richText("div", "thread-card-title", item.title));
       const counts = `${item.comment_count} 댓글 · ${item.attachment_count} 파일`;
-      card.append(make("div", "thread-card-meta", `${item.author} · ${timeText(item.updated_at)} · ${counts}`));
+      const meta = make("div", "thread-card-meta");
+      meta.append(authorChip(item.author));
+      meta.append(document.createTextNode(` · ${timeText(item.updated_at)} · ${counts}`));
+      card.append(meta);
       const preview = String(item.preview || "").replace(/\s+/g, " ").trim();
       if (preview) {
         card.append(richText("div", "thread-preview", preview + (item.body_length > 240 ? "…" : "")));
@@ -746,8 +1280,11 @@ JAVASCRIPT = r"""
     const inner = make("article", "reader-inner");
     inner.dataset.testid = "thread-reader";
     inner.append(richText("h1", "thread-heading", thread.title));
-    inner.append(make("div", "post-meta", `${thread.author} · ${timeText(thread.created_at)} · ${thread.id}`));
-    const postBody = richText("div", "post-body", thread.body);
+    const postMeta = make("div", "post-meta");
+    postMeta.append(authorTagButton(thread.author, "card-author"));
+    postMeta.append(document.createTextNode(` · ${timeText(thread.created_at)} · ${thread.id}`));
+    inner.append(postMeta);
+    const postBody = markdownText("div", "post-body", thread.body);
     postBody.dataset.subjectId = thread.id;
     inner.append(postBody);
 
@@ -763,10 +1300,15 @@ JAVASCRIPT = r"""
     for (const comment of thread.comments) {
       const node = make("article", "comment");
       node.dataset.subjectId = comment.id;
-      const heading = make("div");
-      heading.append(make("span", "comment-author", comment.author));
+      node.style.setProperty("--avatar-hue", String(authorHue(comment.author)));
+      const heading = make("div", "comment-heading");
+      heading.append(authorTagButton(comment.author, "comment-author"));
       heading.append(make("span", "comment-time", timeText(comment.created_at)));
-      node.append(heading, richText("div", "comment-body", comment.body));
+      const avatar = avatarNode(comment.author);
+      avatar.style.cursor = "pointer";
+      avatar.title = `클릭하면 @${comment.author} 태그`;
+      avatar.addEventListener("click", () => tagIntoComposer(`@${comment.author}`));
+      node.append(avatar, heading, markdownText("div", "comment-body", comment.body));
       inner.append(node);
     }
 
@@ -866,9 +1408,13 @@ JAVASCRIPT = r"""
     list.replaceChildren();
     for (const agent of agents) {
       const row = make("div", "peer");
+      row.dataset.peerName = agent.name;
+      row.title = `클릭하면 @${agent.name} 태그`;
       row.append(make("span", `state-dot state-${agent.process_state}`));
       const text = make("div");
-      text.append(make("div", "peer-name", agent.name));
+      const peerName = make("div", "peer-name", agent.name);
+      peerName.style.color = `hsl(${authorHue(agent.name)} 60% 74%)`;
+      text.append(peerName);
       text.append(make("div", "peer-meta", `${agent.model} · ${agent.effort} · ${agent.process_state}`));
       if (agent.retire_reason) text.append(make("div", "peer-reason", agent.retire_reason));
       row.append(text);
@@ -976,9 +1522,23 @@ JAVASCRIPT = r"""
     if (document.visibilityState === "visible") pollUpdates();
   });
 
+  document.addEventListener("focusin", (event) => {
+    if (event.target.matches("textarea[name='body']")) {
+      state.activeComposer = event.target;
+    }
+  });
+  document.getElementById("peer-list").addEventListener("click", (event) => {
+    const row = event.target.closest("[data-peer-name]");
+    if (row) tagIntoComposer(`@${row.dataset.peerName}`);
+  });
+  document.getElementById("tag-all").addEventListener("click", () => {
+    tagIntoComposer("@all");
+  });
+
   loadThreads({ reset: true });
   if (state.selected) selectThread(state.selected, { updateHistory: false });
   pollUpdates();
   window.setInterval(pollUpdates, 5000);
+  window.setInterval(expireHumanMentions, 30000);
 })();
 """

@@ -6,17 +6,18 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Sequence
 
 from .forum import Forum, resolve_run_id
 from .launcher import PreparedRun, prepare_resume, prepare_run, run_reactor
-from .profiles import default_profiles, select_profiles
-from .web import make_server, serve
+from .profiles import default_profiles, resolve_profiles
+from .web import DEFAULT_WEB_PASSWORD, WEB_PASSWORD_ENV, make_server, serve
 
 
-COMMANDS = {"run", "resume", "forum", "serve", "status", "profiles", "doctor"}
+COMMANDS = {"run", "resume", "forum", "serve", "demo", "status", "profiles", "doctor"}
 
 
 def _state_dir(value: str | None, workspace: Path | None = None) -> Path:
@@ -202,6 +203,20 @@ def run_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", default=".", help="shared working directory (default: cwd)")
     parser.add_argument("--state-dir", help="forum/log state directory (default: WORKSPACE/.idea-swarm)")
     parser.add_argument("--profile", action="append", help="launch only this named profile; repeatable")
+    parser.add_argument(
+        "--agent",
+        action="append",
+        metavar="PROVIDER:MODEL:EFFORT[:COUNT]",
+        help=(
+            "launch this ad-hoc agent instead of the defaults; repeatable "
+            "(e.g. openai:gpt-daybreak-blue-latest:high:2)"
+        ),
+    )
+    parser.add_argument(
+        "--profiles-file",
+        help="replace the default agents with a TOML file of [[agents]] entries "
+        "(default: $IDEA_PROFILES_FILE)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="prepare the run without starting models")
     parser.add_argument("--no-web", action="store_true", help="do not serve the live forum while running")
     parser.add_argument("--host", default="127.0.0.1")
@@ -263,7 +278,11 @@ def handle_run(argv: Sequence[str]) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     state_dir = _state_dir(args.state_dir, workspace)
     forum = Forum(state_dir)
-    profiles = select_profiles(args.profile)
+    profiles = resolve_profiles(
+        names=args.profile,
+        specs=args.agent,
+        profiles_file=args.profiles_file or os.environ.get("IDEA_PROFILES_FILE"),
+    )
     prepared = prepare_run(
         forum=forum,
         goal=goal,
@@ -345,6 +364,107 @@ def handle_serve(argv: Sequence[str]) -> int:
     return 0
 
 
+def _seed_demo(forum: Forum) -> tuple[str, str]:
+    from .domain import AgentProfile, Effort, ProcessState, Provider
+
+    run = forum.create_run(
+        "데모 실행: 웹 UI 미리보기용 샘플 데이터",
+        workspace=forum.state_dir,
+    )
+    run_id = str(run["id"])
+    peers = [
+        ("aria", "claude-fable-5", ProcessState.RUNNING),
+        ("bolt", "claude-sonnet-5", ProcessState.RUNNING),
+        ("nova", "claude-opus-5", ProcessState.DORMANT),
+    ]
+    for name, model, process_state in peers:
+        agent = forum.register_agent(
+            run_id,
+            AgentProfile(
+                name=name, provider=Provider.ANTHROPIC, model=model, effort=Effort.HIGH
+            ),
+        )
+        forum.set_process_state(str(agent["id"]), process_state)
+
+    guide = forum.create_thread(
+        run_id,
+        "aria",
+        "데모 포럼 사용법",
+        "이 실행은 UI 테스트용 샘플입니다.\n\n"
+        "- 왼쪽 Peers에서 이름을 클릭하면 입력창에 @태그가 들어갑니다.\n"
+        "- Peers 제목 옆 @all 버튼은 모든 peer를 태그합니다.\n"
+        "- 아래 실시간 활동 스레드에 주기적으로 댓글이 달리며,\n"
+        "  @human 멘션이 포함되면 오른쪽 위에 알림이 뜹니다.\n"
+        "  알림은 읽지 않아도 10분 뒤 자동으로 사라집니다.",
+    )
+    forum.add_comment(str(guide["id"]), "bolt", "@aria 정리 감사합니다. 검색과 페이지네이션도 확인해보세요.")
+    forum.add_comment(str(guide["id"]), "human", "확인했습니다.")
+    live = forum.create_thread(
+        run_id,
+        "nova",
+        "실시간 활동 로그 (데모)",
+        "이 스레드에는 시뮬레이션 댓글이 주기적으로 추가됩니다. @all",
+    )
+    return run_id, str(live["id"])
+
+
+def _demo_activity(forum: Forum, thread_id: str, interval: float) -> None:
+    import itertools
+    import time
+
+    messages = itertools.cycle(
+        [
+            ("aria", "카드 레이아웃 초안을 갱신했습니다. 다음 반복에서 그리드 간격을 조정할게요."),
+            ("bolt", "모바일 브레이크포인트 검토 완료. 2열 → 1열 전환은 720px가 적당합니다."),
+            ("nova", "@human 확인 부탁드립니다 — 멘션 알림 테스트용 댓글입니다."),
+            ("bolt", "색상 토큰 12종을 문서화했습니다. 대비비는 모두 4.5:1 이상입니다."),
+            ("aria", "@nova 접근성 체크리스트 마지막 항목 검토 부탁해요."),
+        ]
+    )
+    while True:
+        time.sleep(interval)
+        author, body = next(messages)
+        try:
+            forum.add_comment(thread_id, author, body)
+        except Exception:  # noqa: BLE001 - demo feeder should die quietly
+            return
+
+
+def handle_demo(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="idea demo",
+        description="Serve the web UI with disposable sample data for manual testing",
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=7331)
+    parser.add_argument("--state-dir", help="reuse this state dir instead of a fresh temp dir")
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=25.0,
+        help="seconds between simulated comments; 0 disables the live feed",
+    )
+    args = parser.parse_args(argv)
+    state_dir = (
+        Path(args.state_dir).expanduser().resolve()
+        if args.state_dir
+        else Path(tempfile.mkdtemp(prefix="idea-demo-"))
+    )
+    forum = Forum(state_dir)
+    live_thread = _seed_demo(forum)[1]
+    print(f"demo state: {state_dir}")
+    print(f"password: {os.environ.get(WEB_PASSWORD_ENV) or DEFAULT_WEB_PASSWORD}")
+    if args.interval > 0:
+        threading.Thread(
+            target=_demo_activity,
+            args=(forum, live_thread, args.interval),
+            daemon=True,
+        ).start()
+        print(f"live feed: {args.interval:g}초 간격으로 댓글 시뮬레이션 (@human 멘션 포함)")
+    serve(forum, args.host, args.port)
+    return 0
+
+
 def handle_status(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(prog="idea status")
     parser.add_argument("run", nargs="?")
@@ -369,10 +489,19 @@ def handle_status(argv: Sequence[str]) -> int:
 
 
 def handle_profiles(argv: Sequence[str]) -> int:
-    parser = argparse.ArgumentParser(prog="idea profiles")
+    parser = argparse.ArgumentParser(
+        prog="idea profiles",
+        description="Show the agent set that `idea run` would launch with the same options.",
+    )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--agent", action="append", metavar="PROVIDER:MODEL:EFFORT[:COUNT]")
+    parser.add_argument("--profiles-file")
     args = parser.parse_args(argv)
-    values = [profile.as_dict() for profile in default_profiles()]
+    profiles = resolve_profiles(
+        specs=args.agent,
+        profiles_file=args.profiles_file or os.environ.get("IDEA_PROFILES_FILE"),
+    )
+    values = [profile.as_dict() for profile in profiles]
     _emit(values, args.json)
     return 0
 
@@ -401,6 +530,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return handle_forum(args)
             if command == "serve":
                 return handle_serve(args)
+            if command == "demo":
+                return handle_demo(args)
             if command == "status":
                 return handle_status(args)
             if command == "profiles":
