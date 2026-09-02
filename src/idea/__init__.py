@@ -4,4 +4,4 @@ from .domain import AgentProfile, Effort, ProcessState, Provider
 
 __all__ = ["AgentProfile", "Effort", "ProcessState", "Provider"]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
