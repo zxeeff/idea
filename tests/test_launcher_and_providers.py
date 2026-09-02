@@ -106,15 +106,16 @@ class LauncherAndProvidersTest(unittest.TestCase):
             profile = AgentProfile("fake", Provider.OPENAI, "fake-model", Effort.LOW)
             run = forum.create_run("goal", workspace)
             agent = forum.register_agent(run["id"], profile)
-            event = json.dumps(
-                {
-                    "thread_id": "session-from-peer",
-                    "type": "tool-output",
-                    "payload": "x" * 200_000,
-                }
+            event_script = (
+                "import json; "
+                "print(json.dumps({"
+                "'thread_id': 'session-from-peer', "
+                "'type': 'tool-output', "
+                "'payload': 'x' * 200_000"
+                "}))"
             )
             invocation = Invocation(
-                argv=(sys.executable, "-c", f"print({event!r})"),
+                argv=(sys.executable, "-c", event_script),
                 cwd=workspace,
                 env={},
             )
