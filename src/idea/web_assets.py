@@ -342,9 +342,84 @@ textarea { min-height: 92px; resize: vertical; }
 .post-meta { margin-top: 10px; color: var(--faint); font-size: 12px; }
 .post-meta .card-author { font-size: 12.5px; }
 .post-body, .comment-body {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 14px/1.72 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.72;
+}
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 1em; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4, .markdown-body h5, .markdown-body h6 {
+  margin: 1.35em 0 .55em;
+  color: #f3f6fa;
+  font-weight: 760;
+  line-height: 1.3;
+}
+.markdown-body h1 { font-size: 1.65em; }
+.markdown-body h2 { padding-bottom: .25em; border-bottom: 1px solid var(--line); font-size: 1.4em; }
+.markdown-body h3 { font-size: 1.2em; }
+.markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 1em; }
+.markdown-body ul, .markdown-body ol { margin: .5em 0 1em; padding-left: 1.7em; }
+.markdown-body li { margin: .2em 0; padding-left: .15em; }
+.markdown-body li::marker { color: var(--muted); }
+.markdown-body blockquote {
+  margin: .8em 0 1em;
+  padding: .15em 1em;
+  border-left: 3px solid #42688e;
+  color: var(--muted);
+}
+.markdown-body code {
+  padding: .12em .34em;
+  border: 1px solid #2b384b;
+  border-radius: 5px;
+  background: #151d29;
+  color: #dce8f5;
+  font: .92em/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.markdown-body pre {
+  margin: .8em 0 1.1em;
+  overflow-x: auto;
+  padding: 13px 15px;
+  border: 1px solid #293649;
+  border-radius: 9px;
+  background: #080d14;
+  scrollbar-gutter: stable;
+}
+.markdown-body pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: pre;
+  overflow-wrap: normal;
+  color: #d7e1ec;
+}
+.markdown-body hr { margin: 1.25em 0; border: 0; border-top: 1px solid var(--line-strong); }
+.markdown-body table {
+  width: 100%;
+  margin: .8em 0 1.1em;
+  border-collapse: collapse;
+  font-size: .95em;
+}
+.markdown-body th, .markdown-body td {
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-body th { background: var(--panel-raised); font-weight: 720; }
+.markdown-body tbody tr:nth-child(even) { background: #ffffff05; }
+.markdown-body del { color: var(--faint); }
+.markdown-body .task-checkbox { margin: 0 .45em 0 0; accent-color: var(--accent); }
+.markdown-body a { overflow-wrap: anywhere; }
+.markdown-body .markdown-raw-link { color: var(--muted); }
+.markdown-body .markdown-language {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--faint);
+  font: 10px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .04em;
+  text-transform: uppercase;
 }
 .mention {
   padding: .08em .36em;
@@ -648,6 +723,275 @@ JAVASCRIPT = r"""
   const richText = (tag, className, text) =>
     appendMentionText(make(tag, className), text);
 
+  const safeMarkdownLink = (rawValue) => {
+    const value = String(rawValue || "").trim();
+    if (/^(https?:|mailto:)/i.test(value)) return value;
+    if (/^(?:#|\?|\/(?!\/)|\.\.?\/)/.test(value)) return value;
+    return null;
+  };
+
+  const appendInlineMarkdown = (node, rawText, depth = 0) => {
+    let value = String(rawText || "");
+    if (depth > 8) return appendMentionText(node, value);
+    const rules = [
+      {
+        pattern: /`([^`\n]+)`/u,
+        render: (match) => make("code", "", match[1]),
+      },
+      {
+        pattern: /\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/u,
+        render: (match) => {
+          const href = safeMarkdownLink(match[2]);
+          if (!href) return make("span", "markdown-raw-link", match[0]);
+          const link = make("a", "");
+          link.href = href;
+          if (match[3]) link.title = match[3];
+          if (/^https?:/i.test(href)) {
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+          }
+          appendInlineMarkdown(link, match[1], depth + 1);
+          return link;
+        },
+      },
+      {
+        pattern: /\*\*([^*\n]+)\*\*/u,
+        render: (match) => {
+          const strong = make("strong", "");
+          appendInlineMarkdown(strong, match[1], depth + 1);
+          return strong;
+        },
+      },
+      {
+        pattern: /__([^_\n]+)__/u,
+        render: (match) => {
+          const strong = make("strong", "");
+          appendInlineMarkdown(strong, match[1], depth + 1);
+          return strong;
+        },
+      },
+      {
+        pattern: /~~([^~\n]+)~~/u,
+        render: (match) => {
+          const deleted = make("del", "");
+          appendInlineMarkdown(deleted, match[1], depth + 1);
+          return deleted;
+        },
+      },
+      {
+        pattern: /\*([^*\n]+)\*/u,
+        render: (match) => {
+          const emphasis = make("em", "");
+          appendInlineMarkdown(emphasis, match[1], depth + 1);
+          return emphasis;
+        },
+      },
+      {
+        pattern: /_([^_\n]+)_/u,
+        render: (match) => {
+          const emphasis = make("em", "");
+          appendInlineMarkdown(emphasis, match[1], depth + 1);
+          return emphasis;
+        },
+      },
+    ];
+
+    while (value) {
+      let selected = null;
+      for (const rule of rules) {
+        const match = rule.pattern.exec(value);
+        if (match && (!selected || match.index < selected.match.index)) {
+          selected = { rule, match };
+        }
+      }
+      if (!selected) {
+        appendMentionText(node, value);
+        break;
+      }
+      if (selected.match.index) {
+        appendMentionText(node, value.slice(0, selected.match.index));
+      }
+      node.append(selected.rule.render(selected.match));
+      value = value.slice(selected.match.index + selected.match[0].length);
+    }
+    return node;
+  };
+
+  const splitMarkdownRow = (line) => {
+    const cells = [];
+    let cell = "";
+    const value = String(line).trim();
+    for (let index = 0; index < value.length; index += 1) {
+      const character = value[index];
+      if (character === "\\" && ["\\", "|"].includes(value[index + 1])) {
+        cell += value[index + 1];
+        index += 1;
+      } else if (character === "|") {
+        cells.push(cell.trim());
+        cell = "";
+      } else {
+        cell += character;
+      }
+    }
+    cells.push(cell.trim());
+    if (cells[0] === "") cells.shift();
+    if (cells.at(-1) === "") cells.pop();
+    return cells;
+  };
+
+  const tableSeparator = (line) => {
+    const cells = splitMarkdownRow(line);
+    return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  };
+
+  const markdownBlockStart = (lines, index) => {
+    const line = lines[index] || "";
+    if (!line.trim()) return true;
+    if (/^ {0,3}(`{3,}|~{3,})/.test(line)) return true;
+    if (/^ {0,3}#{1,6}\s+/.test(line)) return true;
+    if (/^ {0,3}>\s?/.test(line)) return true;
+    if (/^\s*(?:[-+*]|\d+[.)])\s+/.test(line)) return true;
+    if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return true;
+    return index + 1 < lines.length && line.includes("|") && tableSeparator(lines[index + 1]);
+  };
+
+  const appendMarkdownBlocks = (node, rawText) => {
+    const lines = String(rawText || "").replace(/\r\n?/g, "\n").split("\n");
+    let index = 0;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (!line.trim()) {
+        index += 1;
+        continue;
+      }
+
+      const fence = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)\s*$/.exec(line);
+      if (fence) {
+        const marker = fence[1];
+        const language = fence[2];
+        const content = [];
+        index += 1;
+        while (index < lines.length && !new RegExp(`^ {0,3}${marker[0]}{${marker.length},}\\s*$`).test(lines[index])) {
+          content.push(lines[index]);
+          index += 1;
+        }
+        if (index < lines.length) index += 1;
+        const pre = make("pre", "");
+        if (language) pre.append(make("span", "markdown-language", language));
+        const code = make("code", language ? `language-${language.replace(/[^a-z0-9_-]/gi, "")}` : "", content.join("\n"));
+        pre.append(code);
+        node.append(pre);
+        continue;
+      }
+
+      const heading = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+      if (heading) {
+        const headingNode = make(`h${heading[1].length}`, "");
+        appendInlineMarkdown(headingNode, heading[2]);
+        node.append(headingNode);
+        index += 1;
+        continue;
+      }
+
+      if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+        node.append(make("hr", ""));
+        index += 1;
+        continue;
+      }
+
+      if (index + 1 < lines.length && line.includes("|") && tableSeparator(lines[index + 1])) {
+        const headers = splitMarkdownRow(line);
+        const separators = splitMarkdownRow(lines[index + 1]);
+        const table = make("table", "");
+        const head = make("thead", "");
+        const headRow = make("tr", "");
+        headers.forEach((header, column) => {
+          const cell = make("th", "");
+          const separator = separators[column] || "";
+          cell.style.textAlign = separator.startsWith(":") && separator.endsWith(":")
+            ? "center" : (separator.endsWith(":") ? "right" : "left");
+          appendInlineMarkdown(cell, header);
+          headRow.append(cell);
+        });
+        head.append(headRow);
+        table.append(head);
+        const body = make("tbody", "");
+        index += 2;
+        while (index < lines.length && lines[index].trim() && lines[index].includes("|")) {
+          const row = make("tr", "");
+          const values = splitMarkdownRow(lines[index]);
+          headers.forEach((_header, column) => {
+            const cell = make("td", "");
+            cell.style.textAlign = headRow.children[column].style.textAlign;
+            appendInlineMarkdown(cell, values[column] || "");
+            row.append(cell);
+          });
+          body.append(row);
+          index += 1;
+        }
+        table.append(body);
+        node.append(table);
+        continue;
+      }
+
+      if (/^ {0,3}>\s?/.test(line)) {
+        const quoteLines = [];
+        while (index < lines.length && (/^ {0,3}>\s?/.test(lines[index]) || !lines[index].trim())) {
+          quoteLines.push(lines[index].replace(/^ {0,3}>\s?/, ""));
+          index += 1;
+        }
+        const quote = make("blockquote", "");
+        appendMarkdownBlocks(quote, quoteLines.join("\n"));
+        node.append(quote);
+        continue;
+      }
+
+      const listMatch = /^\s*([-+*]|\d+[.)])\s+(.+)$/.exec(line);
+      if (listMatch) {
+        const ordered = /^\d/.test(listMatch[1]);
+        const list = make(ordered ? "ol" : "ul", "");
+        if (ordered) list.start = Number.parseInt(listMatch[1], 10);
+        while (index < lines.length) {
+          const itemMatch = /^\s*([-+*]|\d+[.)])\s+(.+)$/.exec(lines[index]);
+          if (!itemMatch || /^\d/.test(itemMatch[1]) !== ordered) break;
+          const item = make("li", "");
+          const task = /^\[([ xX])\]\s+(.*)$/.exec(itemMatch[2]);
+          if (task) {
+            const checkbox = make("input", "task-checkbox");
+            checkbox.type = "checkbox";
+            checkbox.checked = task[1].toLocaleLowerCase("en-US") === "x";
+            checkbox.disabled = true;
+            item.append(checkbox);
+            appendInlineMarkdown(item, task[2]);
+          } else {
+            appendInlineMarkdown(item, itemMatch[2]);
+          }
+          list.append(item);
+          index += 1;
+        }
+        node.append(list);
+        continue;
+      }
+
+      const paragraphLines = [line];
+      index += 1;
+      while (index < lines.length && !markdownBlockStart(lines, index)) {
+        paragraphLines.push(lines[index]);
+        index += 1;
+      }
+      const paragraph = make("p", "");
+      paragraphLines.forEach((paragraphLine, lineIndex) => {
+        if (lineIndex) paragraph.append(make("br", ""));
+        appendInlineMarkdown(paragraph, paragraphLine);
+      });
+      node.append(paragraph);
+    }
+    return node;
+  };
+
+  const markdownText = (tag, className, text) =>
+    appendMarkdownBlocks(make(tag, `${className} markdown-body`), text);
+
   // Deterministic per-author hue so each agent keeps one color everywhere.
   const authorHue = (author) => {
     const name = String(author || "").trim().toLocaleLowerCase("en-US");
@@ -940,7 +1284,7 @@ JAVASCRIPT = r"""
     postMeta.append(authorTagButton(thread.author, "card-author"));
     postMeta.append(document.createTextNode(` · ${timeText(thread.created_at)} · ${thread.id}`));
     inner.append(postMeta);
-    const postBody = richText("div", "post-body", thread.body);
+    const postBody = markdownText("div", "post-body", thread.body);
     postBody.dataset.subjectId = thread.id;
     inner.append(postBody);
 
@@ -964,7 +1308,7 @@ JAVASCRIPT = r"""
       avatar.style.cursor = "pointer";
       avatar.title = `클릭하면 @${comment.author} 태그`;
       avatar.addEventListener("click", () => tagIntoComposer(`@${comment.author}`));
-      node.append(avatar, heading, richText("div", "comment-body", comment.body));
+      node.append(avatar, heading, markdownText("div", "comment-body", comment.body));
       inner.append(node);
     }
 
