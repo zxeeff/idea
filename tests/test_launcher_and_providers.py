@@ -50,8 +50,34 @@ class LauncherAndProvidersTest(unittest.TestCase):
             self.assertIn("gpt-5.6-luna", codex)
             self.assertIn('model_reasoning_effort="low"', codex)
             self.assertIn("--json", codex)
-            self.assertIn("--dangerously-bypass-approvals-and-sandbox", codex)
+            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", codex)
             self.assertNotIn("--sandbox", codex)
+            self.assertIn("--strict-config", codex)
+            self.assertIn("--ignore-user-config", codex)
+            self.assertIn("--ignore-rules", codex)
+            codex_configs = tuple(
+                codex[index + 1]
+                for index, value in enumerate(codex[:-1])
+                if value == "--config"
+            )
+            self.assertIn('approval_policy="never"', codex_configs)
+            self.assertIn('default_permissions="idea-workspace-only"', codex_configs)
+            self.assertIn(
+                (
+                    f'projects."{workspace.resolve()}".'
+                    'trust_level="untrusted"'
+                ),
+                codex_configs,
+            )
+            codex_filesystem = next(
+                value
+                for value in codex_configs
+                if value.startswith("permissions.idea-workspace-only.filesystem=")
+            )
+            self.assertIn('\":root\"=\"deny\"', codex_filesystem)
+            self.assertIn('\":minimal\"=\"read\"', codex_filesystem)
+            self.assertIn('\":tmpdir\"=\"deny\"', codex_filesystem)
+            self.assertIn("permissions.idea-workspace-only.network.enabled=false", codex_configs)
             codex_system = next(
                 value for value in codex if value.startswith("developer_instructions=")
             )
@@ -65,8 +91,50 @@ class LauncherAndProvidersTest(unittest.TestCase):
             claude = prepared.peers[1].invocation.argv
             self.assertIn("opus", claude)
             self.assertEqual("max", claude[claude.index("--effort") + 1])
-            self.assertIn("--dangerously-skip-permissions", claude)
-            self.assertNotIn("--permission-mode", claude)
+            self.assertNotIn("--dangerously-skip-permissions", claude)
+            self.assertIn("--restricted", claude)
+            self.assertIn("--strict-mcp-config", claude)
+            self.assertNotIn("--add-dir", claude)
+            self.assertEqual(
+                "Bash,Edit,Glob,Grep,Read,Write",
+                claude[claude.index("--tools") + 1],
+            )
+            self.assertEqual(
+                "mcp__*",
+                claude[claude.index("--disallowed-tools") + 1],
+            )
+            self.assertEqual(
+                "acceptEdits",
+                claude[claude.index("--permission-mode") + 1],
+            )
+            claude_settings = json.loads(claude[claude.index("--settings") + 1])
+            self.assertTrue(claude_settings["sandbox"]["enabled"])
+            self.assertTrue(claude_settings["sandbox"]["failIfUnavailable"])
+            self.assertFalse(claude_settings["sandbox"]["allowUnsandboxedCommands"])
+            self.assertTrue(claude_settings["sandbox"]["network"]["strictAllowlist"])
+            self.assertEqual([], claude_settings["sandbox"]["network"]["allowedDomains"])
+            self.assertEqual(
+                ["/"],
+                claude_settings["sandbox"]["filesystem"]["denyRead"],
+            )
+            self.assertIn(
+                str(workspace.resolve()),
+                claude_settings["sandbox"]["filesystem"]["allowRead"],
+            )
+            self.assertEqual(
+                "disable",
+                claude_settings["permissions"]["disableBypassPermissionsMode"],
+            )
+            self.assertEqual(
+                "1",
+                prepared.peers[1].invocation.env[
+                    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR"
+                ],
+            )
+            self.assertEqual(
+                "1",
+                prepared.peers[1].invocation.env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"],
+            )
             claude_system = claude[claude.index("--append-system-prompt") + 1]
             self.assertIn("forum --help", claude_system)
             self.assertNotIn("fix the failing test", claude_system)
@@ -91,13 +159,31 @@ class LauncherAndProvidersTest(unittest.TestCase):
             resumed_codex = resumed.peers[0].invocation.argv
             self.assertEqual("resume", resumed_codex[2])
             self.assertIn("codex-session-id", resumed_codex)
-            self.assertIn("--dangerously-bypass-approvals-and-sandbox", resumed_codex)
+            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", resumed_codex)
+            self.assertIn('default_permissions="idea-workspace-only"', resumed_codex)
             resumed_claude = resumed.peers[1].invocation.argv
             self.assertEqual(
                 "claude-session-id",
                 resumed_claude[resumed_claude.index("--resume") + 1],
             )
-            self.assertIn("--dangerously-skip-permissions", resumed_claude)
+            self.assertNotIn("--dangerously-skip-permissions", resumed_claude)
+            self.assertIn("--restricted", resumed_claude)
+
+    def test_forum_state_must_stay_inside_the_sandboxed_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_directory:
+            with tempfile.TemporaryDirectory() as state_directory:
+                workspace = Path(workspace_directory)
+                forum = Forum(Path(state_directory))
+                profiles = (
+                    AgentProfile("peer", Provider.OPENAI, "gpt-5.6-luna", Effort.LOW),
+                )
+                with self.assertRaisesRegex(ValueError, "inside the workspace"):
+                    prepare_run(
+                        forum=forum,
+                        goal="stay contained",
+                        workspace=workspace,
+                        profiles=profiles,
+                    )
 
     def test_runner_accepts_an_oversized_jsonl_line_without_dying(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

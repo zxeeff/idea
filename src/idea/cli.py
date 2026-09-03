@@ -201,7 +201,13 @@ def run_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("goal", nargs="+", help="the exact objective passed to every peer")
     parser.add_argument("--workspace", default=".", help="shared working directory (default: cwd)")
-    parser.add_argument("--state-dir", help="forum/log state directory (default: WORKSPACE/.idea-swarm)")
+    parser.add_argument(
+        "--state-dir",
+        help=(
+            "forum/log state directory; must be inside WORKSPACE "
+            "(default: WORKSPACE/.idea-swarm)"
+        ),
+    )
     parser.add_argument("--profile", action="append", help="launch only this named profile; repeatable")
     parser.add_argument(
         "--agent",
@@ -309,7 +315,10 @@ def handle_resume(argv: Sequence[str]) -> int:
         description="Resume stopped peers in the same run, sessions, workspace, and forum.",
     )
     parser.add_argument("run", nargs="?", help="run id (default: latest)")
-    parser.add_argument("--state-dir")
+    parser.add_argument(
+        "--state-dir",
+        help="forum/log state directory; must be inside the run workspace",
+    )
     parser.add_argument("--profile", action="append", help="resume only this peer; repeatable")
     parser.add_argument(
         "--fresh",

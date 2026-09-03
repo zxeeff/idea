@@ -14,6 +14,10 @@ from .domain import AgentProfile, ProcessState, Provider
 from .forum import Forum
 
 
+_CODEX_PERMISSION_PROFILE = "idea-workspace-only"
+_CLAUDE_RESTRICTED_TOOLS = "Bash,Edit,Glob,Grep,Read,Write"
+
+
 @dataclass(frozen=True, slots=True)
 class Invocation:
     argv: tuple[str, ...]
@@ -23,6 +27,137 @@ class Invocation:
 
 def _module_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def validate_workspace_boundary(*, workspace: Path, state_dir: Path) -> tuple[Path, Path]:
+    """Resolve and validate paths that autonomous peers are allowed to modify."""
+
+    workspace = workspace.expanduser().resolve()
+    state_dir = state_dir.expanduser().resolve()
+    if not state_dir.is_relative_to(workspace):
+        raise ValueError(
+            "sandboxed agents require the forum state directory to be inside the workspace: "
+            f"{state_dir} is outside {workspace}"
+        )
+    return workspace, state_dir
+
+
+def _runtime_read_roots(workspace: Path) -> tuple[Path, ...]:
+    """Return narrow read-only exceptions needed to run IDEA's forum client."""
+
+    candidates = {
+        _module_root(),
+        Path(sys.prefix).expanduser().resolve(),
+        Path(sys.base_prefix).expanduser().resolve(),
+    }
+    return tuple(
+        sorted(
+            (path for path in candidates if not path.is_relative_to(workspace)),
+            key=str,
+        )
+    )
+
+
+def _claude_system_read_roots() -> tuple[Path, ...]:
+    """Return the narrow OS paths required to launch ordinary local tools."""
+
+    candidates = (
+        Path("/bin"),
+        Path("/sbin"),
+        Path("/usr/bin"),
+        Path("/usr/sbin"),
+        Path("/usr/lib"),
+        Path("/usr/libexec"),
+        Path("/usr/share"),
+        Path("/lib"),
+        Path("/lib64"),
+        Path("/System"),
+        Path("/Library/Developer/CommandLineTools"),
+        Path("/Applications/Xcode.app/Contents/Developer"),
+        Path("/dev"),
+        Path("/proc/self"),
+        Path("/proc/thread-self"),
+        Path("/etc/ld.so.cache"),
+        Path("/etc/passwd"),
+        Path("/etc/group"),
+        Path("/etc/nsswitch.conf"),
+    )
+    return tuple(path for path in candidates if path.exists())
+
+
+def _toml_string_map(values: dict[str, str]) -> str:
+    entries = (
+        f"{json.dumps(key, ensure_ascii=True)}={json.dumps(value, ensure_ascii=True)}"
+        for key, value in values.items()
+    )
+    return "{" + ",".join(entries) + "}"
+
+
+def _codex_sandbox_args(workspace: Path) -> tuple[str, ...]:
+    filesystem = {
+        ":root": "deny",
+        ":minimal": "read",
+        ":tmpdir": "deny",
+        ":slash_tmp": "deny",
+    }
+    filesystem.update({str(path): "read" for path in _runtime_read_roots(workspace)})
+    return (
+        "--strict-config",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--config",
+        (
+            f"projects.{json.dumps(str(workspace), ensure_ascii=True)}."
+            'trust_level="untrusted"'
+        ),
+        "--config",
+        'approval_policy="never"',
+        "--config",
+        f'default_permissions="{_CODEX_PERMISSION_PROFILE}"',
+        "--config",
+        f'permissions.{_CODEX_PERMISSION_PROFILE}.extends=":workspace"',
+        "--config",
+        (
+            f"permissions.{_CODEX_PERMISSION_PROFILE}.filesystem="
+            f"{_toml_string_map(filesystem)}"
+        ),
+        "--config",
+        f"permissions.{_CODEX_PERMISSION_PROFILE}.network.enabled=false",
+        "--config",
+        "shell_environment_policy.ignore_default_excludes=false",
+    )
+
+
+def _claude_sandbox_settings(workspace: Path) -> str:
+    read_roots = (
+        workspace,
+        *_runtime_read_roots(workspace),
+        *_claude_system_read_roots(),
+    )
+    settings = {
+        "disableAllHooks": True,
+        "permissions": {"disableBypassPermissionsMode": "disable"},
+        "sandbox": {
+            "enabled": True,
+            "failIfUnavailable": True,
+            "autoAllowBashIfSandboxed": True,
+            "allowUnsandboxedCommands": False,
+            "excludedCommands": [],
+            "filesystem": {
+                # Restricted mode confines built-in file tools. These rules apply the
+                # same boundary to Bash while preserving the OS and IDEA runtimes.
+                "denyRead": ["/"],
+                "allowRead": [str(path) for path in read_roots],
+                "allowWrite": [],
+            },
+            "network": {
+                "allowedDomains": [],
+                "strictAllowlist": True,
+                "allowLocalBinding": False,
+            },
+        },
+    }
+    return json.dumps(settings, ensure_ascii=False, separators=(",", ":"))
 
 
 def agent_environment(
@@ -35,7 +170,7 @@ def agent_environment(
 ) -> dict[str, str]:
     env = os.environ.copy()
     # The browser password belongs to the launcher process. Never expose it to
-    # autonomous provider subprocesses, especially in bypass-permission mode.
+    # autonomous provider subprocesses.
     env.pop("IDEA_WEB_PASSWORD", None)
     existing_pythonpath = env.get("PYTHONPATH")
     module_root = str(_module_root())
@@ -75,6 +210,10 @@ def build_invocation(
     trigger_event_id: int | None = None,
     trigger_thread_id: str | None = None,
 ) -> Invocation:
+    workspace, state_dir = validate_workspace_boundary(
+        workspace=workspace,
+        state_dir=state_dir,
+    )
     env = agent_environment(
         state_dir=state_dir,
         run_id=run_id,
@@ -91,6 +230,7 @@ def build_invocation(
             f'model_reasoning_effort="{profile.effort.value}"',
             "--config",
             f"developer_instructions={json.dumps(system_prompt, ensure_ascii=False)}",
+            *_codex_sandbox_args(workspace),
         )
         if resume_session_id:
             argv = (
@@ -98,7 +238,6 @@ def build_invocation(
                 "exec",
                 "resume",
                 *common,
-                "--dangerously-bypass-approvals-and-sandbox",
                 "--skip-git-repo-check",
                 "--json",
                 resume_session_id,
@@ -109,7 +248,6 @@ def build_invocation(
                 executable,
                 "exec",
                 *common,
-                "--dangerously-bypass-approvals-and-sandbox",
                 "--cd",
                 str(workspace),
                 "--skip-git-repo-check",
@@ -118,6 +256,8 @@ def build_invocation(
             )
     elif profile.provider is Provider.ANTHROPIC:
         executable = shutil.which("claude") or "claude"
+        env["CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR"] = "1"
+        env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] = "1"
         resume_args = ("--resume", resume_session_id) if resume_session_id else ()
         argv = (
             executable,
@@ -126,9 +266,16 @@ def build_invocation(
             profile.model,
             "--effort",
             profile.effort.value,
-            "--dangerously-skip-permissions",
-            "--add-dir",
-            str(state_dir),
+            "--restricted",
+            "--strict-mcp-config",
+            "--tools",
+            _CLAUDE_RESTRICTED_TOOLS,
+            "--disallowed-tools",
+            "mcp__*",
+            "--permission-mode",
+            "acceptEdits",
+            "--settings",
+            _claude_sandbox_settings(workspace),
             "--append-system-prompt",
             system_prompt,
             "--output-format",

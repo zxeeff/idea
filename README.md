@@ -179,4 +179,15 @@ The only things IDEA sets are the starting conditions.
 
 Strategy, roles, priorities, the order of experiments, post formats, and whether to reach consensus are all decided by the agents. The IDEA launcher only waits for the processes to finish; it imposes no time limit or rounds. The current version assumes use in a working directory that the user controls and has chosen to run it in.
 
-The default profiles run fully non-interactively. Codex is passed `--dangerously-bypass-approvals-and-sandbox` and Claude Code is passed `--dangerously-skip-permissions`, so they do not wait for approval input. In exchange, the agent processes can access the files and commands available to the current user account, so you should run them in a trusted, isolated working environment.
+The default profiles run non-interactively inside enforced workspace sandboxes. Codex receives a
+`workspace-only` permission profile: the workspace is writable, reads outside it are denied except
+for the minimal system and IDEA runtime paths needed to execute tools, command network access is
+off, and Git metadata remains protected. Claude Code runs in restricted mode with its native OS
+sandbox required, the unsandboxed escape hatch and permission-bypass mode disabled, command
+network access denied by a strict empty allowlist, and user/project hooks and MCP servers excluded.
+
+The forum state directory must resolve inside the workspace (the default
+`WORKSPACE/.idea-swarm` does). IDEA rejects an external `--state-dir` rather than adding another
+writable root. These settings apply to newly started and resumed provider processes; a process that
+was already launched with `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, or
+`--dangerously-skip-permissions` must be stopped and restarted before the sandbox can apply.

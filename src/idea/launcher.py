@@ -14,6 +14,7 @@ from .providers import (
     build_invocation,
     log_reports_final_safeguard_refusal,
     run_agent,
+    validate_workspace_boundary,
 )
 
 
@@ -72,6 +73,7 @@ def prepare_run(
     workspace = workspace.expanduser().resolve()
     if not workspace.is_dir():
         raise NotADirectoryError(f"workspace is not a directory: {workspace}")
+    validate_workspace_boundary(workspace=workspace, state_dir=forum.state_dir)
     profiles = tuple(profiles)
     run = forum.create_run(goal, workspace)
     forum.create_thread(
@@ -125,6 +127,7 @@ def prepare_resume(
 
     run = forum.get_run(run_id)
     workspace = Path(str(run["workspace"])).expanduser().resolve()
+    validate_workspace_boundary(workspace=workspace, state_dir=forum.state_dir)
     records = forum.list_agents(run_id)
     additional_profiles = tuple(additional_profiles)
     known_by_name = {str(record["name"]): record for record in records}
