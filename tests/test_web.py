@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import tempfile
+import textwrap
 import threading
 import unittest
 import urllib.parse
@@ -13,6 +16,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from idea.forum import Forum
+from idea.web_assets import JAVASCRIPT
 from idea.web import (
     DEFAULT_WEB_PASSWORD,
     PasswordSessions,
@@ -178,6 +182,10 @@ class WebForumTest(unittest.TestCase):
         self.assertIn("const appendMarkdownBlocks", page)
         self.assertIn("const appendInlineMarkdown", page)
         self.assertIn("const safeMarkdownLink", page)
+        self.assertIn("const safeMarkdownImage", page)
+        self.assertIn("const findMarkdownLink", page)
+        self.assertIn("const markdownListItem", page)
+        self.assertIn("const markdownTableAt", page)
         self.assertIn('markdownText("div", "post-body", thread.body)', page)
         self.assertIn('markdownText("div", "comment-body", comment.body)', page)
         self.assertIn('paragraph.append(make("br", ""))', page)
@@ -187,6 +195,123 @@ class WebForumTest(unittest.TestCase):
         self.assertNotIn(".innerHTML", page)
         self.assertIn(".markdown-body pre", page)
         self.assertIn(".markdown-body table", page)
+        self.assertIn(".markdown-body .markdown-table-wrap", page)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is needed for the DOM renderer test")
+    def test_markdown_renderer_handles_real_world_nested_content(self) -> None:
+        start = JAVASCRIPT.index("  const make = ")
+        end = JAVASCRIPT.index("\n\n  // Deterministic per-author hue", start)
+        renderer = JAVASCRIPT[start:end]
+        harness = textwrap.dedent(
+            r"""
+            class TestNode {
+              constructor(tagName = "", value = null) {
+                this.tagName = tagName.toUpperCase();
+                this.nodeValue = value;
+                this.childNodes = [];
+                this.parentNode = null;
+                this.className = "";
+                this.dataset = {};
+                this.style = { textAlign: "", setProperty() {} };
+              }
+              append(...nodes) {
+                for (let node of nodes) {
+                  if (!(node instanceof TestNode)) node = new TestNode("", String(node));
+                  node.parentNode = this;
+                  this.childNodes.push(node);
+                }
+              }
+              prepend(...nodes) {
+                for (let index = nodes.length - 1; index >= 0; index -= 1) {
+                  let node = nodes[index];
+                  if (!(node instanceof TestNode)) node = new TestNode("", String(node));
+                  node.parentNode = this;
+                  this.childNodes.unshift(node);
+                }
+              }
+              set textContent(value) {
+                this.childNodes = [];
+                if (value !== "") this.append(new TestNode("", String(value)));
+              }
+              get textContent() {
+                if (!this.tagName) return this.nodeValue || "";
+                return this.childNodes.map((node) => node.textContent).join("");
+              }
+              get children() { return this.childNodes.filter((node) => node.tagName); }
+              get firstElementChild() { return this.children[0] || null; }
+              setAttribute(name, value) { this[name] = String(value); }
+            }
+            const document = {
+              createElement: (tag) => new TestNode(tag),
+              createTextNode: (text) => new TestNode("", String(text)),
+            };
+            const state = { peerNames: new Set(["peer-1"]) };
+            """
+        )
+        checks = textwrap.dedent(
+            r"""
+            const sample = [
+              "**bold and *nested italic***",
+              "",
+              "1. first",
+              "   - nested child",
+              "     - grandchild",
+              "2. second",
+              "",
+              "| Name | Expression | Note |",
+              "| :--- | :--------: | ---: |",
+              "| pipe | `a | b` | escaped \\| value |",
+              "",
+              "[balanced](https://example.com/guide_(draft).md), <https://example.com>,",
+              "\\*literal asterisk\\*, and ![preview](https://example.com/image.png \"Preview\").",
+            ].join("\n");
+            const root = markdownText("div", "body", sample);
+            const all = [];
+            const visit = (node) => {
+              all.push(node);
+              node.childNodes.forEach(visit);
+            };
+            visit(root);
+            const tags = (name) => all.filter((node) => node.tagName === name);
+            const literalParagraph = tags("P").find((node) => node.textContent.includes("literal asterisk"));
+            const result = {
+              nestedLists: tags("UL").filter((node) => node.parentNode?.tagName === "LI").length,
+              tableWrappers: all.filter((node) => node.className === "markdown-table-wrap").length,
+              tableHeaders: tags("TH").map((node) => node.textContent),
+              tableCells: tags("TD").map((node) => node.textContent),
+              balancedHref: tags("A").find((node) => node.textContent === "balanced")?.href,
+              autoHref: tags("A").find((node) => node.textContent === "https://example.com")?.href,
+              imageSrc: tags("IMG")[0]?.src,
+              escapedText: literalParagraph?.textContent,
+              escapedEmphasis: literalParagraph
+                ? all.filter((node) => node.tagName === "EM" && node.parentNode === literalParagraph).length
+                : -1,
+              nestedEmphasis: tags("STRONG")[0]?.children.some((node) => node.tagName === "EM"),
+            };
+            process.stdout.write(JSON.stringify(result));
+            """
+        )
+        completed = subprocess.run(
+            [shutil.which("node") or "node", "-"],
+            input=harness + renderer + checks,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        rendered = json.loads(completed.stdout)
+
+        self.assertEqual(2, rendered["nestedLists"])
+        self.assertEqual(1, rendered["tableWrappers"])
+        self.assertEqual(["Name", "Expression", "Note"], rendered["tableHeaders"])
+        self.assertEqual(["pipe", "a | b", "escaped | value"], rendered["tableCells"])
+        self.assertEqual(
+            "https://example.com/guide_(draft).md", rendered["balancedHref"]
+        )
+        self.assertEqual("https://example.com", rendered["autoHref"])
+        self.assertEqual("https://example.com/image.png", rendered["imageSrc"])
+        self.assertIn("*literal asterisk*", rendered["escapedText"])
+        self.assertEqual(0, rendered["escapedEmphasis"])
+        self.assertTrue(rendered["nestedEmphasis"])
 
     def test_thread_listing_is_keyset_paginated_and_searchable(self) -> None:
         threads = [
