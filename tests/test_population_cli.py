@@ -57,6 +57,21 @@ class PopulationCliTest(unittest.TestCase):
         for agent in forum.list_agents(run_id):
             self.assertEqual(str(self.workspace), copies.get(agent["id"])["path"])
 
+    def test_daybreak_preset_applies_to_every_adaptive_peer(self):
+        forum, run_id = self.run_preview(
+            "--preset", "daybreak", "--initial-agents", "16", "--max-agents", "20"
+        )
+        population = PopulationStore(forum, run_id)
+        self.assertEqual(1, len(population.templates()))
+        agents = forum.list_agents(run_id)
+        self.assertEqual(16, len(agents))
+        self.assertEqual({"openai"}, {agent["provider"] for agent in agents})
+        self.assertEqual(
+            {"gpt-daybreak-blue-latest"},
+            {agent["model"] for agent in agents},
+        )
+        self.assertEqual({"max"}, {agent["effort"] for agent in agents})
+
     def test_invalid_policy_fails_before_preparing_any_run(self):
         for arguments in (
             ("--max-agents", "501"), ("--initial-agents", "0"), ("--birth-burst", "0"),

@@ -17,7 +17,7 @@ from .commands import MAX_FILE_BYTES, dispatch_forum
 from .forum import Forum, resolve_run_id
 from .execution import ExecutionPolicy, RunLock
 from .launcher import PreparedRun, prepare_resume, prepare_run, run_reactor
-from .profiles import default_profiles, resolve_profiles
+from .profiles import available_presets, default_profiles, resolve_profiles
 from .web import DEFAULT_WEB_PASSWORD, WEB_PASSWORD_ENV, make_server, serve
 
 
@@ -541,10 +541,16 @@ def run_parser() -> argparse.ArgumentParser:
             "(e.g. openai:gpt-daybreak-blue-latest:high:2)"
         ),
     )
-    parser.add_argument(
+    profile_source = parser.add_mutually_exclusive_group()
+    profile_source.add_argument(
         "--profiles-file",
         help="replace the default agents with a TOML file of [[agents]] entries "
         "(default: $IDEA_PROFILES_FILE)",
+    )
+    profile_source.add_argument(
+        "--preset",
+        choices=available_presets(),
+        help="replace the default agents with a packaged model preset",
     )
     parser.add_argument("--dry-run", action="store_true", help="prepare the run without starting models")
     parser.add_argument("--no-web", action="store_true", help="do not serve the live forum while running")
@@ -701,7 +707,11 @@ def handle_run(argv: Sequence[str]) -> int:
     profiles = resolve_profiles(
         names=args.profile,
         specs=args.agent,
-        profiles_file=args.profiles_file or os.environ.get("IDEA_PROFILES_FILE"),
+        profiles_file=(
+            args.profiles_file
+            or (None if args.preset else os.environ.get("IDEA_PROFILES_FILE"))
+        ),
+        preset=args.preset,
     )
     prepared = prepare_run(
         forum=forum,
@@ -978,11 +988,17 @@ def handle_profiles(argv: Sequence[str]) -> int:
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--agent", action="append", metavar="PROVIDER:MODEL:EFFORT[:COUNT]")
-    parser.add_argument("--profiles-file")
+    profile_source = parser.add_mutually_exclusive_group()
+    profile_source.add_argument("--profiles-file")
+    profile_source.add_argument("--preset", choices=available_presets())
     args = parser.parse_args(argv)
     profiles = resolve_profiles(
         specs=args.agent,
-        profiles_file=args.profiles_file or os.environ.get("IDEA_PROFILES_FILE"),
+        profiles_file=(
+            args.profiles_file
+            or (None if args.preset else os.environ.get("IDEA_PROFILES_FILE"))
+        ),
+        preset=args.preset,
     )
     values = [profile.as_dict() for profile in profiles]
     _emit(values, args.json)

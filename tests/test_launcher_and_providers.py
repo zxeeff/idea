@@ -461,18 +461,28 @@ class LauncherAndProvidersTest(unittest.TestCase):
             )
 
             self.assertEqual(("sol-high",), tuple(peer.profile.name for peer in expanded.peers))
-            self.assertEqual(len(legacy), len(forum.list_agents(prepared.run["id"])))
+            legacy_signatures = {
+                (profile.provider, profile.model, profile.effort) for profile in legacy
+            }
+            introduced = sum(
+                (profile.provider, profile.model, profile.effort) not in legacy_signatures
+                for profile in current
+            )
+            self.assertEqual(
+                len(legacy) + introduced,
+                len(forum.list_agents(prepared.run["id"])),
+            )
 
     def test_expansion_does_not_alias_an_unrelated_name_with_the_same_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory).resolve()
             forum = Forum(workspace / ".idea")
-            luna = default_profiles()[0]
+            default = default_profiles()[0]
             custom = AgentProfile(
                 "my-specialist",
-                luna.provider,
-                luna.model,
-                luna.effort,
+                default.provider,
+                default.model,
+                default.effort,
             )
             prepared = prepare_run(
                 forum=forum,
@@ -484,11 +494,11 @@ class LauncherAndProvidersTest(unittest.TestCase):
             prepare_resume(
                 forum=forum,
                 run_id=prepared.run["id"],
-                additional_profiles=(luna,),
+                additional_profiles=(default,),
             )
 
             self.assertEqual(
-                {"my-specialist", "luna-1"},
+                {"my-specialist", default.name},
                 {str(record["name"]) for record in forum.list_agents(prepared.run["id"])},
             )
 

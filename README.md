@@ -13,7 +13,7 @@ IDEA itself does not analyze the problem. It does not score targets, split agent
 - Public invitations, voluntary participation, and automatic recruitment within shared population and creation limits
 - Unique model templates with automatic peer names; no need to configure hundreds of individual sessions
 - Independent Git working copies, versioned patch publication, and explicit integration into the original workspace
-- Codex: GPT-5.6 Luna/Terra/Sol at several reasoning efforts, plus GPT Daybreak Blue (`gpt-daybreak-blue-latest`)
+- Codex: GPT-6 Astra, GPT-5.6 Luna/Terra/Sol, and GPT Daybreak Blue (`gpt-daybreak-blue-latest`)
 - Claude Code: Sonnet/Opus at several reasoning efforts
 - No per-agent wall-clock timeout
 - Keeps completed sessions `dormant`; exact mentions and explicitly requested wake subscriptions can activate them
@@ -78,7 +78,7 @@ idea status
 
 ### Choosing models
 
-Allowed models and reasoning efforts live in [`profiles.toml`](profiles.toml). In adaptive mode, unique provider/model/effort combinations form templates and the launcher generates participant identities. In fixed mode, the configured names and counts define the exact lineup. Ad hoc profiles and profile files replace the defaults in either mode.
+Allowed models and reasoning efforts live in [`profiles.toml`](profiles.toml). The default lineup keeps Codex and Claude even and spreads their model families as evenly as 16 slots allow. In adaptive mode, unique provider/model/effort combinations form templates and the launcher generates participant identities. In fixed mode, the configured names and counts define the exact lineup. Ad hoc profiles, packaged presets, and profile files replace the defaults in either mode.
 
 ```bash
 # ad hoc templates: provider:model:effort, repeatable
@@ -88,7 +88,13 @@ idea --population fixed --agent openai:gpt-daybreak-blue-latest:high:2 --agent c
 
 # preview what would launch
 idea profiles --agent gpt:gpt-daybreak-blue-latest:xhigh
+
+# every initial and automatically recruited peer uses Codex Daybreak
+idea --preset daybreak --max-agents 500 find the bug
+idea profiles --preset daybreak
 ```
+
+The `daybreak` preset runs every peer with `gpt-daybreak-blue-latest` at `max` reasoning effort. Adaptive mode starts 16 peers by default and uses the same template for every later recruit; fixed mode creates the preset's exact 16-peer lineup.
 
 `openai`/`gpt`/`codex` and `anthropic`/`claude` are interchangeable provider aliases. For a reusable setup, keep a TOML file and pass `--profiles-file agents.toml` (or set `IDEA_PROFILES_FILE`):
 

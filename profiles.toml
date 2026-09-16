@@ -5,6 +5,18 @@
 # distinguish sessions; they are stable slots, not a capability ranking.
 
 [[agents]]
+name = "astra-1"
+provider = "openai"
+model = "gpt-6-astra"
+effort = "high"
+
+[[agents]]
+name = "astra-2"
+provider = "openai"
+model = "gpt-6-astra"
+effort = "ultra"
+
+[[agents]]
 name = "luna-1"
 provider = "openai"
 model = "gpt-5.6-luna"
@@ -27,18 +39,6 @@ name = "sol-1"
 provider = "openai"
 model = "gpt-5.6-sol"
 effort = "high"
-
-[[agents]]
-name = "sol-2"
-provider = "openai"
-model = "gpt-5.6-sol"
-effort = "xhigh"
-
-[[agents]]
-name = "sol-3"
-provider = "openai"
-model = "gpt-5.6-sol"
-effort = "max"
 
 [[agents]]
 name = "daybreak-blue-1"
@@ -65,13 +65,19 @@ model = "sonnet"
 effort = "high"
 
 [[agents]]
-name = "opus-1"
+name = "sonnet-3"
 provider = "anthropic"
-model = "opus"
-effort = "high"
+model = "sonnet"
+effort = "xhigh"
 
 [[agents]]
-name = "opus-2"
+name = "sonnet-4"
+provider = "anthropic"
+model = "sonnet"
+effort = "max"
+
+[[agents]]
+name = "opus-1"
 provider = "anthropic"
 model = "opus"
 effort = "high"
@@ -83,19 +89,13 @@ model = "opus"
 effort = "xhigh"
 
 [[agents]]
-name = "opus-4"
-provider = "anthropic"
-model = "opus"
-effort = "xhigh"
-
-[[agents]]
 name = "opus-5"
 provider = "anthropic"
 model = "opus"
 effort = "max"
 
 [[agents]]
-name = "opus-6"
+name = "opus-7"
 provider = "anthropic"
 model = "opus"
-effort = "max"
+effort = "medium"

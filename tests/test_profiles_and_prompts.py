@@ -7,9 +7,11 @@ from pathlib import Path
 
 from idea.domain import AgentProfile, Effort, Provider
 from idea.profiles import (
+    available_presets,
     default_profiles,
     load_profiles_file,
     parse_agent_spec,
+    preset_profiles,
     resolve_profiles,
 )
 from idea.prompts import shared_prompt, user_task
@@ -36,25 +38,53 @@ class ProfilesAndPromptsTest(unittest.TestCase):
     def test_default_handles_expose_model_family_without_effort(self) -> None:
         self.assertEqual(
             (
+                "astra-1",
+                "astra-2",
                 "luna-1",
                 "terra-1",
                 "terra-2",
                 "sol-1",
-                "sol-2",
-                "sol-3",
                 "daybreak-blue-1",
                 "daybreak-blue-2",
                 "sonnet-1",
                 "sonnet-2",
+                "sonnet-3",
+                "sonnet-4",
                 "opus-1",
-                "opus-2",
                 "opus-3",
-                "opus-4",
                 "opus-5",
-                "opus-6",
+                "opus-7",
             ),
             tuple(profile.name for profile in default_profiles()),
         )
+
+    def test_defaults_include_astra_and_keep_providers_and_models_balanced(self) -> None:
+        profiles = default_profiles()
+        providers = {
+            provider: [profile for profile in profiles if profile.provider is provider]
+            for provider in Provider
+        }
+        self.assertEqual({Provider.OPENAI: 8, Provider.ANTHROPIC: 8}, {
+            provider: len(items) for provider, items in providers.items()
+        })
+        self.assertIn("gpt-6-astra", {profile.model for profile in profiles})
+        for items in providers.values():
+            counts = {
+                model: sum(profile.model == model for profile in items)
+                for model in {profile.model for profile in items}
+            }
+            self.assertLessEqual(max(counts.values()) - min(counts.values()), 1)
+
+    def test_daybreak_preset_uses_only_daybreak_at_max_effort(self) -> None:
+        self.assertIn("daybreak", available_presets())
+        profiles = preset_profiles("daybreak")
+        self.assertEqual(16, len(profiles))
+        self.assertEqual({Provider.OPENAI}, {profile.provider for profile in profiles})
+        self.assertEqual({"gpt-daybreak-blue-latest"}, {profile.model for profile in profiles})
+        self.assertEqual({Effort.MAX}, {profile.effort for profile in profiles})
+        self.assertEqual(profiles, resolve_profiles(preset="daybreak"))
+        with self.assertRaises(ValueError):
+            preset_profiles("missing")
 
     def test_agent_spec_parses_provider_aliases_counts_and_names(self) -> None:
         profiles = parse_agent_spec("gpt:gpt-daybreak-blue-latest:high:2")
