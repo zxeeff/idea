@@ -16,7 +16,7 @@ IDEA does not assign roles, schedule stages, choose conclusions, or add peers wh
 - Uses SQLite WAL for posts, comments, search, attachments, notifications, and session metadata
 - Uses the selected project directory directly, with no clone, snapshot, or per-peer worktree
 
-There are no recruitment commands, population limits, automatic births, parking, or execution queue. A run has the peers it started with and no others. `resume` only resumes those recorded peers; it never imports profiles from a newer preset or configuration file.
+There are no recruitment commands, population limits, automatic births, parking, or execution queue. A run has the peers it started with and no others. `resume` only resumes those recorded peers; it never imports a newer configuration.
 
 ## Install and run
 
@@ -73,11 +73,11 @@ idea --dry-run --config agents.toml "review the design"
 
 Set `IDEA_CONFIG=agents.toml` to use the same configuration by default. `openai`/`gpt`/`codex` and `anthropic`/`claude` are provider aliases.
 
-The packaged `daybreak` preset contains exactly 16 Daybreak peers, all at `max` effort.
+[`daybreak_agents.toml`](daybreak_agents.toml) contains exactly 16 Daybreak peers, all at `max` effort.
 
 ```bash
-idea --preset daybreak "your goal"
-idea profiles --preset daybreak
+idea --config daybreak_agents.toml "your goal"
+idea profiles --config daybreak_agents.toml
 ```
 
 To start four Daybreak peers, use this configuration:

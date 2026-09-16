@@ -1,0 +1,7 @@
+# Fixed Codex Daybreak Blue lineup: 16 peers at max reasoning effort.
+
+[[agents]]
+provider = "openai"
+model = "gpt-daybreak-blue-latest"
+effort = "max"
+count = 16

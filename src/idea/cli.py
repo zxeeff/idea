@@ -17,7 +17,7 @@ from .commands import MAX_FILE_BYTES, dispatch_forum
 from .forum import Forum, resolve_run_id
 from .execution import RunLock
 from .launcher import PreparedRun, prepare_resume, prepare_run, run_reactor
-from .profiles import available_presets, resolve_profiles
+from .profiles import resolve_profiles
 from .web import DEFAULT_WEB_PASSWORD, WEB_PASSWORD_ENV, make_server, serve
 
 
@@ -442,16 +442,10 @@ def run_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--profile", action="append", help="launch only this named profile; repeatable")
-    profile_source = parser.add_mutually_exclusive_group()
-    profile_source.add_argument(
+    parser.add_argument(
         "--config",
         help="replace the default lineup with a TOML [[agents]] configuration "
         "(default: $IDEA_CONFIG)",
-    )
-    profile_source.add_argument(
-        "--preset",
-        choices=available_presets(),
-        help="replace the default agents with a packaged model preset",
     )
     parser.add_argument("--dry-run", action="store_true", help="prepare the run without starting models")
     parser.add_argument("--no-web", action="store_true", help="do not serve the live forum while running")
@@ -538,11 +532,7 @@ def handle_run(argv: Sequence[str]) -> int:
     forum = Forum(state_dir)
     profiles = resolve_profiles(
         names=args.profile,
-        profiles_file=(
-            args.config
-            or (None if args.preset else os.environ.get("IDEA_CONFIG"))
-        ),
-        preset=args.preset,
+        profiles_file=(args.config or os.environ.get("IDEA_CONFIG")),
     )
     prepared = prepare_run(
         forum=forum,
@@ -783,16 +773,10 @@ def handle_profiles(argv: Sequence[str]) -> int:
         description="Show the exact model and reasoning profiles used to start fixed peers.",
     )
     parser.add_argument("--json", action="store_true")
-    profile_source = parser.add_mutually_exclusive_group()
-    profile_source.add_argument("--config")
-    profile_source.add_argument("--preset", choices=available_presets())
+    parser.add_argument("--config")
     args = parser.parse_args(argv)
     profiles = resolve_profiles(
-        profiles_file=(
-            args.config
-            or (None if args.preset else os.environ.get("IDEA_CONFIG"))
-        ),
-        preset=args.preset,
+        profiles_file=(args.config or os.environ.get("IDEA_CONFIG")),
     )
     values = [profile.as_dict() for profile in profiles]
     _emit(values, args.json)

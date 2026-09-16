@@ -20,7 +20,6 @@ _MAX_COPIES = 500
 
 
 _DEFAULTS_PATH = Path(__file__).resolve().parents[2] / "profiles.toml"
-_PRESETS_PATH = Path(__file__).with_name("profile_presets")
 
 
 @cache
@@ -37,23 +36,6 @@ def default_profiles() -> tuple[AgentProfile, ...]:
             "without its source checkout)"
         )
     return load_profiles_file(_DEFAULTS_PATH)
-
-
-def available_presets() -> tuple[str, ...]:
-    """Return packaged profile presets in stable CLI order."""
-
-    if not _PRESETS_PATH.is_dir():
-        return ()
-    return tuple(sorted(path.stem for path in _PRESETS_PATH.glob("*.toml") if path.is_file()))
-
-
-def preset_profiles(name: str) -> tuple[AgentProfile, ...]:
-    """Load a packaged profile preset by its short name."""
-
-    if name not in available_presets():
-        choices = ", ".join(available_presets()) or "none installed"
-        raise ValueError(f"unknown profile preset {name!r}; use one of: {choices}")
-    return load_profiles_file(_PRESETS_PATH / f"{name}.toml")
 
 
 def _parse_provider(value: str) -> Provider:
@@ -154,21 +136,14 @@ def _filter_by_names(
 def resolve_profiles(
     names: Iterable[str] | None = None,
     profiles_file: str | Path | None = None,
-    preset: str | None = None,
 ) -> tuple[AgentProfile, ...]:
     """Build the active profile set.
 
-    A packaged preset or TOML configuration replaces the built-in defaults;
-    with neither, the defaults apply. A preset and configuration are mutually
-    exclusive. ``names`` then filters by profile name.
+    A TOML configuration replaces the built-in defaults; with none, the
+    defaults apply. ``names`` then filters by profile name.
     """
 
-    if preset and profiles_file:
-        raise ValueError("a profile preset and profiles file cannot be used together")
-    if preset or profiles_file:
-        profiles = preset_profiles(preset) if preset else load_profiles_file(profiles_file)
-    else:
-        profiles = default_profiles()
+    profiles = load_profiles_file(profiles_file) if profiles_file else default_profiles()
     return _filter_by_names(profiles, names)
 
 

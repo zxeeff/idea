@@ -7,10 +7,8 @@ from pathlib import Path
 
 from idea.domain import AgentProfile, Effort, Provider
 from idea.profiles import (
-    available_presets,
     default_profiles,
     load_profiles_file,
-    preset_profiles,
     resolve_profiles,
 )
 from idea.prompts import shared_prompt, user_task
@@ -74,16 +72,14 @@ class ProfilesAndPromptsTest(unittest.TestCase):
             }
             self.assertLessEqual(max(counts.values()) - min(counts.values()), 1)
 
-    def test_daybreak_preset_uses_only_daybreak_at_max_effort(self) -> None:
-        self.assertIn("daybreak", available_presets())
-        profiles = preset_profiles("daybreak")
+    def test_daybreak_configuration_uses_only_daybreak_at_max_effort(self) -> None:
+        config = Path(__file__).resolve().parents[1] / "daybreak_agents.toml"
+        profiles = load_profiles_file(config)
         self.assertEqual(16, len(profiles))
         self.assertEqual({Provider.OPENAI}, {profile.provider for profile in profiles})
         self.assertEqual({"gpt-daybreak-blue-latest"}, {profile.model for profile in profiles})
         self.assertEqual({Effort.MAX}, {profile.effort for profile in profiles})
-        self.assertEqual(profiles, resolve_profiles(preset="daybreak"))
-        with self.assertRaises(ValueError):
-            preset_profiles("missing")
+        self.assertEqual(profiles, resolve_profiles(profiles_file=config))
 
     def test_profiles_file_replaces_defaults_and_supports_counts_up_to_500(self) -> None:
         with tempfile.TemporaryDirectory() as workdir:
