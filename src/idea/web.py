@@ -144,76 +144,27 @@ def _public_agent(agent: dict[str, Any]) -> dict[str, Any]:
         "model",
         "effort",
         "process_state",
-        "participation_state",
-        "parked_at",
         "created_at",
         "started_at",
         "exited_at",
         "retired_at",
         "retire_reason",
     )
-    return {key: agent.get(key) for key in keys} | {
-        "participation_state": agent.get("participation_state") or "resident"
-    }
+    return {key: agent.get(key) for key in keys}
 
 
 def _agent_summary(forum: Forum, run_id: str) -> dict[str, Any]:
     """Keep polling payloads constant-size even for hundreds of peers."""
     agents = [_public_agent(agent) for agent in forum.list_agents(run_id)]
     states: dict[str, int] = {}
-    resident_count = parked_count = 0
     for agent in agents:
         name = str(agent["process_state"])
         states[name] = states.get(name, 0) + 1
-        if name != "retired":
-            if agent["participation_state"] == "parked":
-                parked_count += 1
-            else:
-                resident_count += 1
     version = hashlib.sha256(
         json.dumps(agents, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:20]
     return {
         "total_count": len(agents), "states": states, "version": version,
-        "resident_count": resident_count, "parked_count": parked_count,
-    }
-
-
-def _population_store(forum: Forum, run_id: str) -> Any:
-    try:
-        from .population import PopulationStore
-    except ModuleNotFoundError as error:
-        if error.name != "idea.population":
-            raise
-        return None
-    return PopulationStore(forum, run_id)
-
-
-def _scaling_summary(forum: Forum, run_id: str) -> dict[str, Any]:
-    population = _population_store(forum, run_id)
-    # Read historical artifact metadata without initializing working copies.
-    with forum._connection() as connection:
-        tables = {row["name"] for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-            "('workspace_policies', 'agent_workspaces', 'workspace_artifacts')"
-        )}
-        legacy = connection.execute(
-            "SELECT mode, base_revision FROM workspace_policies WHERE run_id=?", (run_id,)
-        ).fetchone() if "workspace_policies" in tables else None
-        prepared_count = connection.execute(
-            "SELECT COUNT(*) FROM agent_workspaces WHERE run_id=?", (run_id,)
-        ).fetchone()[0] if "agent_workspaces" in tables else 0
-        artifact_count = connection.execute(
-            "SELECT COUNT(*) FROM workspace_artifacts WHERE run_id=?", (run_id,)
-        ).fetchone()[0] if "workspace_artifacts" in tables else 0
-    return {
-        "population": population.summary() if population else {"configured": False},
-        "workspaces": {
-            "mode": legacy["mode"] if legacy else "shared",
-            "base_revision": legacy["base_revision"] if legacy else None,
-            "prepared_count": prepared_count,
-            "artifact_count": artifact_count,
-        },
     }
 
 
@@ -232,21 +183,6 @@ def _public_artifact(forum: Forum, artifact: dict[str, Any], *, preview: bool = 
     if preview:
         result["note"] = str(result["note"] or "")[:280]
         result["validation"] = str(result["validation"] or "")[:280]
-    return result
-
-
-def _public_call(call: dict[str, Any]) -> dict[str, Any]:
-    # A directory entry points back to the public discussion. It does not need
-    # internal reservation or provider session bookkeeping.
-    result = {
-        key: call.get(key)
-        for key in (
-            "id", "thread_id", "reason", "state", "template_id", "created_at",
-            "expires_at", "agent_id", "requester_agent_id", "author",
-        )
-        if key in call
-    }
-    result["reason"] = str(result.get("reason", ""))[:320]
     return result
 
 
@@ -312,11 +248,6 @@ def _peer_html(agent: dict[str, Any]) -> str:
         if agent.get("retire_reason")
         else ""
     )
-    participation = (
-        '<div class="peer-participation" title="세션과 참여 기록을 보존한 유휴 상태">Parked · 유휴 보존</div>'
-        if agent.get("participation_state") == "parked" and agent["process_state"] != "retired"
-        else ""
-    )
     hue = _author_hue(str(agent["name"]))
     return (
         f'<div class="peer" data-peer-name="{_e(agent["name"])}" '
@@ -325,7 +256,7 @@ def _peer_html(agent: dict[str, Any]) -> str:
         '<div>'
         f'<div class="peer-name" style="color:hsl({hue} 60% 74%)">{_e(agent["name"])}</div>'
         f'<div class="peer-meta">{_e(agent["model"])} · {_e(agent["effort"])} · '
-        f'{_e(agent["process_state"])}</div>{participation}{reason}</div></div>'
+        f'{_e(agent["process_state"])}</div>{reason}</div></div>'
     )
 
 
@@ -440,10 +371,6 @@ def render_page(forum: Forum, run_id: str) -> str:
     </form>
   </div>
 </header>
-<section id="run-status" class="run-status" aria-label="충원 상태" aria-live="polite" hidden>
-  <div id="run-status-counts" class="run-status-counts"></div>
-  <div id="run-status-reason" class="run-status-reason"></div>
-</section>
 <main class="workspace-grid" data-idea-app data-run-id="{_e(run_id)}"
   data-high-water="{high_water}" data-peer-version="{_e(agent_summary['version'])}"
   data-peer-cursor="{_e(peers['next_cursor'] or '')}">
@@ -472,10 +399,8 @@ def render_page(forum: Forum, run_id: str) -> str:
     <section class="side-section">
       <h2 class="section-title"><span id="peer-total">Peers {agent_summary['total_count']}</span>
         <button id="tag-all" class="mention-chip" type="button"
-          title="Resident peer에게 알림을 남깁니다. 실행 한도 안에서 순차 처리됩니다.">@all</button></h2>
-      <div id="peer-participation" class="peer-summary">Resident {agent_summary['resident_count']} · Parked {agent_summary['parked_count']}</div>
+          title="은퇴하지 않은 모든 peer에게 알림을 남깁니다.">@all</button></h2>
       <div id="peer-states" class="peer-summary">Running {agent_summary['states'].get('running', 0)} · Dormant {agent_summary['states'].get('dormant', 0)}</div>
-      <div class="peer-summary peer-help">Parked: 세션과 참여 기록을 보존한 유휴 상태</div>
       <div id="notification-counts" class="peer-summary">알림 대기 {notifications['pending_agents']}명 · {notifications['pending_events']}건</div>
       <form id="peer-search-form" class="search-form peer-search" role="search">
         <input id="peer-search-input" type="search" placeholder="이름·모델 검색"
@@ -485,15 +410,6 @@ def render_page(forum: Forum, run_id: str) -> str:
       <button id="peer-refresh" class="button quiet peer-refresh" type="button" hidden>동료 상태 갱신</button>
       <div id="peer-list">{peer_html}</div>
       <button id="peer-load-more" class="button quiet peer-more" type="button"{'' if peers['next_cursor'] else ' hidden'}>동료 더 보기</button>
-    </section>
-    <section id="collaboration-board" class="side-section" hidden>
-      <h2 class="section-title">참여 모집</h2>
-      <div id="call-list" class="coordination-list"></div>
-      <button id="call-more" class="button quiet peer-more" type="button" hidden>모집 더 보기</button>
-      <h2 class="section-title artifact-heading">공유 결과물</h2>
-      <div id="artifact-list" class="coordination-list"></div>
-      <button id="artifact-more" class="button quiet peer-more" type="button" hidden>결과물 더 보기</button>
-      <button id="coordination-refresh" class="button quiet peer-more" type="button" hidden>모집·결과물 갱신</button>
     </section>
     <section class="side-section">
       <h2 class="section-title">Runs</h2>
@@ -716,10 +632,6 @@ class ForumHandler(BaseHTTPRequestHandler):
                         "summary": _agent_summary(self.forum, run_id),
                     })
                     return
-                if resource == "scaling":
-                    self.forum.get_run(run_id)
-                    self._json(_scaling_summary(self.forum, run_id))
-                    return
                 if resource == "approaches":
                     from .approaches import ApproachStore
 
@@ -740,16 +652,6 @@ class ForumHandler(BaseHTTPRequestHandler):
                         limit=self._integer(query, "limit", 10, minimum=1, maximum=100),
                         after=query.get("after", [None])[-1],
                     ))
-                    return
-                if resource == "calls":
-                    self.forum.get_run(run_id)
-                    limit = self._integer(query, "limit", 10, minimum=1, maximum=100)
-                    store = _population_store(self.forum, run_id)
-                    page = store.list_calls(
-                        state=query.get("state", ["open"])[-1], limit=limit,
-                        after=query.get("after", [None])[-1],
-                    ) if store else {"items": [], "next_cursor": None}
-                    self._json(page | {"items": [_public_call(item) for item in page["items"]]})
                     return
                 if resource == "artifacts":
                     self.forum.get_run(run_id)
@@ -809,7 +711,6 @@ class ForumHandler(BaseHTTPRequestHandler):
                     payload: dict[str, Any] = summary | {
                         "agent_summary": _agent_summary(self.forum, run_id),
                         "notifications": self.forum.notification_counts(run_id),
-                        "scaling": _scaling_summary(self.forum, run_id),
                         "human_mentions": self.forum.human_mentions(
                             run_id, mentions_after
                         ),

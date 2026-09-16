@@ -15,9 +15,9 @@ from typing import Any, Sequence
 from .commands import MAX_FILE_BYTES, dispatch_forum
 
 from .forum import Forum, resolve_run_id
-from .execution import ExecutionPolicy, RunLock
+from .execution import RunLock
 from .launcher import PreparedRun, prepare_resume, prepare_run, run_reactor
-from .profiles import available_presets, default_profiles, resolve_profiles
+from .profiles import available_presets, resolve_profiles
 from .web import DEFAULT_WEB_PASSWORD, WEB_PASSWORD_ENV, make_server, serve
 
 
@@ -175,7 +175,7 @@ def _add_approach_commands(sub) -> None:
 def forum_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="idea forum",
-        description="Discuss evidence, find peers, manage participation, and share changes.",
+        description="Discuss evidence, find peers, follow discussions, and share changes.",
         epilog="Run idea forum COMMAND --help for that command's usage and examples.",
     )
     parser.add_argument("--state-dir")
@@ -258,7 +258,7 @@ def forum_parser() -> argparse.ArgumentParser:
         follow.add_argument("--agent-id")
         follow.add_argument("--json", action="store_true")
         if name == "follow":
-            follow.add_argument("--wake", action="store_true", help="request activation on new activity, within shared execution limits")
+            follow.add_argument("--wake", action="store_true", help="request activation on new activity")
 
     following = sub.add_parser(
         "following", help="List your thread subscriptions",
@@ -284,9 +284,8 @@ def forum_parser() -> argparse.ArgumentParser:
         "post", help="Open a new thread and optionally request attention",
         description=(
             "Share evidence, artifacts, findings, or limits in a new public thread.\n"
-            "Use exact @peer-name to request a peer's attention, @all for resident peers,\n"
-            "or @human to notify the user. Mentions queue attention within shared\n"
-            "execution limits."
+            "Use exact @peer-name to request a peer's attention, @all for all peers,\n"
+            "or @human to notify the user. Mentions resume the same peer session."
         ),
         epilog=(
             'Example: idea forum post --title "Evidence" --body "Result @peer-name"\n'
@@ -353,75 +352,6 @@ def forum_parser() -> argparse.ArgumentParser:
     retire.add_argument("--agent-id")
     retire.add_argument("--json", action="store_true")
 
-    recruit = sub.add_parser(
-        "recruit", help="Invite one additional participant to a discussion",
-        description=(
-            "Open a public invitation for one additional participant. Explain why another\n"
-            "independent contribution would help and reference the relevant evidence.\n"
-            "Existing idle peers receive optional offers: at most two per invitation by\n"
-            "default, including during the grace period. New admission waits for both\n"
-            "the grace period and those activations to finish, and requires an unfilled\n"
-            "invitation and available execution capacity, within\n"
-            "the run's shared limits. Each peer also has a limit on open invitations.\n"
-            "Each participant chooses their own approach."
-        ),
-        epilog=(
-            'Example: idea forum recruit THREAD_ID --reason "Second approach" --key APPROACH\n'
-            "Reuse --key with the same invitation fields when retrying. Use calls to inspect\n"
-            "invitations, templates for allowed settings, and population for shared limits.\n"
-            "Withdraw an obsolete invitation with cancel-call CALL_ID."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    recruit.add_argument("thread_id")
-    recruit.add_argument("--reason", required=True, help="why another participant would help, with relevant evidence")
-    recruit.add_argument("--template", dest="template_id", help="allowed template ID from idea forum templates")
-    recruit.add_argument("--ttl", type=float, help="invitation lifetime in seconds, at most the run's call_ttl")
-    recruit.add_argument("--key", dest="request_key", help="stable invitation key; reuse for identical retries to avoid duplicates")
-    recruit.add_argument("--agent-id")
-    recruit.add_argument("--json", action="store_true")
-    calls = sub.add_parser(
-        "calls", help="Find public invitations and participation status",
-        description=(
-            "Browse public invitations. A filled invitation means "
-            "a participant has been connected; it does not certify completion of the work. "
-            "Failed admission leaves the invitation failed and does not automatically "
-            "create another peer. Optional offers to idle peers finish before new admission."
-        ),
-        epilog="Choose to join with volunteer CALL_ID. The requester can withdraw an unfilled invitation with cancel-call CALL_ID.",
-    )
-    calls.add_argument("--state", default="open",
-                       choices=("open", "filled", "cancelled", "expired", "failed", "all"),
-                       help="invitation state (default: open); failed admission is not retried automatically")
-    calls.add_argument("--limit", type=int, default=30)
-    calls.add_argument("--after", help="continue from the previous next_cursor")
-    calls.add_argument("--json", action="store_true")
-    for name, help_text, description in (
-        ("volunteer", "Join an invitation using your existing participation",
-         "Choose to join a public invitation. If it is still open, your participation "
-         "satisfies its request for another peer without creating a new session. "
-         "Choose your own approach and exchange evidence in the linked thread."),
-        ("cancel-call", "Withdraw your own unfilled invitation",
-         "The requesting peer can withdraw an unfilled invitation when additional "
-         "participation is no longer needed. Its public history remains available."),
-    ):
-        call = sub.add_parser(name, help=help_text, description=description)
-        call.add_argument("call_id")
-        call.add_argument("--agent-id")
-        call.add_argument("--json", action="store_true")
-    for name, help_text, description in (
-        ("templates", "List allowed execution templates",
-         "List the allowed provider, model, and reasoning settings. Pass an entry's ID "
-         "to recruit --template when requesting that execution configuration."),
-        ("population", "Inspect shared participation and execution limits",
-         "Show resident, parked, and actually running peers, pending participation offers, "
-         "and shared session and invocation budgets. Parked peers retain their sessions "
-         "and identity; exact mentions, chosen wake subscriptions, or participation "
-         "offers can activate them again. New admission requires an unfilled invitation "
-         "and execution capacity."),
-    ):
-        view = sub.add_parser(name, help=help_text, description=description)
-        view.add_argument("--json", action="store_true")
     artifacts = sub.add_parser(
         "artifacts", help="List patches from older isolated runs",
         description="Find versioned contributions with their base revision, changed files, and reported validation.",
@@ -503,7 +433,7 @@ def run_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("goal", nargs="+", help="the exact objective passed to every peer")
-    parser.add_argument("--workspace", default=".", help="original project directory to snapshot (default: cwd)")
+    parser.add_argument("--workspace", default=".", help="shared project directory (default: cwd)")
     parser.add_argument(
         "--state-dir",
         help=(
@@ -517,7 +447,7 @@ def run_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="PROVIDER:MODEL:EFFORT[:COUNT]",
         help=(
-            "allow this execution template instead of the defaults; COUNT applies in fixed mode; repeatable "
+            "replace the default lineup; repeatable "
             "(e.g. openai:gpt-daybreak-blue-latest:high:2)"
         ),
     )
@@ -536,23 +466,15 @@ def run_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-web", action="store_true", help="do not serve the live forum while running")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7331)
-    _add_execution_arguments(parser)
-    _add_population_arguments(parser)
     _add_communication_arguments(parser)
     return parser
-
-
-def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--max-concurrent", type=int, help="maximum live provider calls (default: 16; persisted on resume)")
-    parser.add_argument("--max-codex", type=int, help="Codex calls within the shared execution limit")
-    parser.add_argument("--max-claude", type=int, help="Claude calls within the shared execution limit")
 
 
 def _add_communication_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--notification-debounce", type=float,
                         help="nonnegative quiet seconds before grouping subscription updates by thread (default: 1; persisted on resume)")
     parser.add_argument("--notification-max-wait", type=float,
-                        help="maximum subscription grouping wait in seconds, at least debounce (default: 5); 0/0 disables waiting but keeps grouping; exact mentions, @all and invitations stay immediate")
+                        help="maximum subscription grouping wait in seconds, at least debounce (default: 5); 0/0 disables waiting but keeps grouping; exact mentions and @all stay immediate")
 
 
 def _communication_policy(args: argparse.Namespace, previous=None):
@@ -564,50 +486,6 @@ def _communication_policy(args: argparse.Namespace, previous=None):
         ("notification_max_wait", "max_wait_seconds"),
     ) if getattr(args, option, None) is not None}
     return replace(previous or CommunicationPolicy(), **values)
-
-
-def _add_population_arguments(parser: argparse.ArgumentParser, *, resume: bool = False) -> None:
-    parser.add_argument("--population", choices=("adaptive", "fixed"), default=None if resume else "adaptive",
-                        help="adaptive public recruitment or the explicitly configured fixed lineup")
-    for option, kind, help_text in (
-        ("initial-agents", int, "initial population drawn from unique model templates (default: 16)"),
-        ("max-agents", int, "maximum resident participants, including reservations; parked peers are preserved separately (default: 100)"),
-        ("birth-burst", int, "shared new-session burst capacity (default: 16)"),
-        ("births-per-minute", float, "shared new-session token refill per minute (default: 2)"),
-        ("max-births", int, "cumulative new-session reservation limit (default: 500)"),
-        ("max-invocations", int, "cumulative provider invocation limit (default: 5000)"),
-        ("participation-grace", float, "seconds before an invitation can receive a new peer; reuse offers may start earlier (default: 30)"),
-        ("call-ttl", float, "default public invitation lifetime in seconds (default: 1800)"),
-        ("max-open-calls-per-agent", int, "open invitations per peer, 1..500 (default: 4)"),
-        ("max-offers-per-call", int, "optional offers to existing peers per invitation, 0..500; 0 skips offers (default: 2)"),
-        ("offer-cooldown", float, "minimum seconds between offers to the same peer, 0 or greater (default: 300)"),
-        ("idle-timeout", float, "positive idle seconds before preserving an unused peer as parked (default: 300)"),
-    ):
-        parser.add_argument(f"--{option}", type=kind, help=help_text)
-
-
-def _population_policy(args: argparse.Namespace, previous=None, *, fixed_count: int | None = None):
-    from dataclasses import replace
-    from .population import PopulationPolicy
-
-    policy = previous or PopulationPolicy()
-    values = {key: getattr(args, key) for key in (
-        "initial_agents", "max_agents", "birth_burst", "births_per_minute", "max_births",
-        "max_invocations", "participation_grace", "call_ttl",
-        "max_open_calls_per_agent", "max_offers_per_call", "offer_cooldown", "idle_timeout",
-    ) if getattr(args, key, None) is not None}
-    if fixed_count is not None and "initial_agents" not in values:
-        values["initial_agents"] = fixed_count
-    if fixed_count is not None and previous is None and "max_agents" not in values:
-        values["max_agents"] = max(policy.max_agents, fixed_count)
-    return replace(policy, **values)
-
-
-def _validate_execution_arguments(args: argparse.Namespace) -> None:
-    ExecutionPolicy(
-        max_concurrent=args.max_concurrent if args.max_concurrent is not None else 16,
-        max_codex=args.max_codex, max_claude=args.max_claude,
-    )
 
 
 def _describe_prepared(prepared: PreparedRun, state_dir: Path) -> None:
@@ -629,9 +507,6 @@ def _execute_prepared(
     no_web: bool,
     host: str,
     port: int,
-    max_concurrent: int | None = None,
-    max_codex: int | None = None,
-    max_claude: int | None = None,
     run_lock: RunLock | None = None,
 ) -> int:
     server = None
@@ -646,11 +521,7 @@ def _execute_prepared(
         thread.start()
         print(f"live forum: http://{actual_host}:{actual_port}/?run={prepared.run['id']}")
     try:
-        codes = asyncio.run(run_reactor(
-            forum=forum, prepared=prepared, max_concurrent=max_concurrent,
-            max_codex=max_codex, max_claude=max_claude,
-            run_lock=run_lock,
-        ))
+        codes = asyncio.run(run_reactor(forum=forum, prepared=prepared, run_lock=run_lock))
     except KeyboardInterrupt:
         print("launcher interrupted; stopping peer processes", file=sys.stderr)
         return 130
@@ -661,13 +532,7 @@ def _execute_prepared(
         if thread is not None:
             thread.join(timeout=2)
     failed = [code for code in codes if code != 0]
-    from .population import PopulationStore
-
-    population = PopulationStore(forum, str(prepared.run["id"]))
-    if population.configured() and population.summary()["exhausted"]:
-        print("invocation limit reached; pending work is preserved for an explicit resume")
-    else:
-        print("execution stopped; participation and pending work remain recorded in the forum")
+    print("execution stopped; the original peers and their forum history remain recorded")
     print(f"forum remains at {state_dir}")
     print(f"reopen it with: idea serve --state-dir {state_dir}")
     return 1 if failed else 0
@@ -675,8 +540,6 @@ def _execute_prepared(
 
 def handle_run(argv: Sequence[str]) -> int:
     args = run_parser().parse_args(argv)
-    _validate_execution_arguments(args)
-    _population_policy(args)
     communication_policy = _communication_policy(args)
     goal = " ".join(args.goal).strip()
     workspace = Path(args.workspace).expanduser().resolve()
@@ -696,8 +559,6 @@ def handle_run(argv: Sequence[str]) -> int:
         goal=goal,
         workspace=workspace,
         profiles=profiles,
-        population_policy=_population_policy(args, fixed_count=len(profiles) if args.population == "fixed" else None),
-        adaptive=args.population == "adaptive",
     )
     from .communication import CommunicationStore
 
@@ -716,7 +577,6 @@ def handle_run(argv: Sequence[str]) -> int:
         no_web=args.no_web,
         host=args.host,
         port=args.port,
-        max_concurrent=args.max_concurrent, max_codex=args.max_codex, max_claude=args.max_claude,
     )
 
 
@@ -736,49 +596,26 @@ def handle_resume(argv: Sequence[str]) -> int:
         action="store_true",
         help="start fresh provider sessions while retaining the existing forum",
     )
-    parser.add_argument(
-        "--expand-defaults",
-        action="store_true",
-        help="add any newly introduced default profiles to this existing run",
-    )
     parser.add_argument("--dry-run", action="store_true", help="preview without starting peers")
     parser.add_argument("--no-web", action="store_true")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7331)
-    _add_execution_arguments(parser)
-    _add_population_arguments(parser, resume=True)
     _add_communication_arguments(parser)
     args = parser.parse_args(argv)
-    _validate_execution_arguments(args)
     state_dir = _state_dir(args.state_dir)
     forum = Forum(state_dir)
     run_id = _run_id(forum, args.run)
-    if args.dry_run and args.expand_defaults:
-        raise ValueError("--expand-defaults cannot be combined with --dry-run")
     with RunLock(forum.state_dir, run_id) as run_lock:
-        from .population import PopulationStore
-        from .domain import AgentProfile, Provider, Effort
         from .communication import CommunicationStore
 
         communication = CommunicationStore(forum, run_id)
         communication_policy = _communication_policy(args, communication.policy())
-        population = PopulationStore(forum, run_id)
-        previous = population.policy()
-        existing = forum.list_agents(run_id)
-        profiles = [AgentProfile(str(record["name"]), Provider(record["provider"]), record["model"], Effort(record["effort"]))
-                    for record in existing]
-        population.configure(
-            profiles=profiles if previous is None else None,
-            policy=_population_policy(args, previous, fixed_count=max(1, len(profiles)) if previous is None else None),
-            enabled=(args.population == "adaptive") if args.population is not None else (False if previous is None else None),
-        )
         prepared = prepare_resume(
             forum=forum,
             run_id=run_id,
             profile_names=args.profile,
             fresh_sessions=args.fresh,
             reset_processes=not args.dry_run,
-            additional_profiles=default_profiles() if args.expand_defaults else (),
             run_lock=run_lock,
         )
         communication.configure(
@@ -797,7 +634,6 @@ def handle_resume(argv: Sequence[str]) -> int:
             no_web=args.no_web,
             host=args.host,
             port=args.port,
-            max_concurrent=args.max_concurrent, max_codex=args.max_codex, max_claude=args.max_claude,
             run_lock=run_lock,
         )
 
@@ -922,15 +758,12 @@ def handle_status(argv: Sequence[str]) -> int:
     forum = Forum(_state_dir(args.state_dir))
     run_id = _run_id(forum, args.run)
     snapshot = forum.snapshot(run_id)
-    from .population import PopulationStore
-    snapshot["population"] = PopulationStore(forum, run_id).summary()
     if args.json:
         _emit(snapshot, True)
     else:
         print(f'goal: {snapshot["run"]["goal"]}')
         print(f'workspace: {snapshot["run"]["workspace"]}')
         print(f'threads: {len(snapshot["threads"])}')
-        print(f'population: {json.dumps(snapshot["population"], ensure_ascii=False)}')
         for agent in snapshot["agents"]:
             print(
                 f'  {agent["name"]}: {agent["model"]} / {agent["effort"]} / '
@@ -957,7 +790,7 @@ def handle_integrate(argv: Sequence[str]) -> int:
 def handle_profiles(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="idea profiles",
-        description="Show allowed model profiles (templates in adaptive mode; exact peers in fixed mode).",
+        description="Show the exact model and reasoning profiles used to start fixed peers.",
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--agent", action="append", metavar="PROVIDER:MODEL:EFFORT[:COUNT]")
@@ -997,7 +830,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         if os.environ.get("IDEA_AGENT_ID") and (not args or args[0] not in {"forum", "profiles", "doctor"}):
-            raise ValueError("peer sessions use forum invitations; launcher and integration commands belong to the user")
+            raise ValueError("peer sessions use the forum; launcher and integration commands belong to the user")
         if args and args[0] in COMMANDS:
             command = args.pop(0)
             if command == "run":

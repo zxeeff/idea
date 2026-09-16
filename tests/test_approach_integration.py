@@ -9,9 +9,7 @@ from idea.approaches import ApproachStore
 from idea.commands import dispatch_forum
 from idea.communication import CommunicationStore
 from idea.domain import AgentProfile, Effort, ProcessState, Provider
-from idea.execution import ExecutionStore
 from idea.forum import Forum
-from idea.population import PopulationPolicy, PopulationStore
 from idea.reports import ReportStore
 
 
@@ -97,24 +95,6 @@ class ApproachIntegrationTest(unittest.TestCase):
         self.assertEqual(report["id"], received["exchange"]["report_id"])
         self.assertEqual(1, received["exchange"]["source_report"]["source_changes"]["total_count"])
         self.assertEqual(self.target["id"], received["approach"]["id"])
-
-    def test_recruitment_prefers_existing_voluntary_members_without_assigning_work(self):
-        population = PopulationStore(self.forum, self.run_id)
-        population.configure(policy=PopulationPolicy(initial_agents=3, max_agents=10))
-        for agent in self.agents:
-            self.forum.set_process_state(agent["id"], ProcessState.DORMANT, session_id=f"session-{agent['id']}")
-        # The earlier nonmember is otherwise eligible and wins the old FIFO rule.
-        self.approaches.join(self.target["id"], self.agents[2]["id"])
-        call = population.open_call(self.agents[0]["id"], self.target_thread["id"], "An independent check would help")
-        store = ExecutionStore(self.forum, self.run_id)
-        policy = store.configure(max_concurrent=3)
-        birth = population.reserve_birth(execution_policy=policy, available_agent_ids=[a["id"] for a in self.agents])
-        self.assertIsNone(birth)
-        with self.forum._connection() as connection:
-            offered = connection.execute("SELECT agent_id FROM participation_offers WHERE call_id=?", (call["id"],)).fetchone()[0]
-        self.assertEqual(self.agents[2]["id"], offered)
-        self.assertEqual("open", population.get_call(call["id"])["state"])
-        self.assertEqual(3, len(self.forum.list_agents(self.run_id)))
 
     def test_group_retains_report_references_when_latest_update_is_ordinary_comment(self):
         worker = self.agents[0]["id"]

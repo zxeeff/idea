@@ -130,16 +130,6 @@ a:hover { text-decoration: underline; }
   grid-template-columns: 238px minmax(310px, 370px) minmax(0, 1fr);
   min-height: 0;
 }
-.run-status {
-  flex: 0 0 auto;
-  padding: 9px 22px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel-soft);
-}
-.run-status-counts { display: flex; flex-wrap: wrap; gap: 5px 20px; color: var(--muted); font-size: 12px; }
-.run-status-link { padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font-size: inherit; }
-.run-status-link:hover { color: var(--blue); text-decoration: underline; }
-.run-status-reason { margin-top: 3px; color: var(--amber); font-size: 11px; }
 .coordination-list { display: grid; gap: 8px; }
 .coordination-card {
   display: block;
@@ -230,7 +220,6 @@ a:hover { text-decoration: underline; }
 .peer-name { overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .peer-meta { color: var(--faint); font-size: 11px; }
 .peer-reason { margin-top: 3px; color: var(--muted); font-size: 11px; }
-.peer-participation { margin-top: 3px; color: var(--amber); font-size: 11px; }
 .peer-summary { margin: 5px 0; color: var(--muted); font-size: 11px; }
 .peer-help { color: var(--faint); }
 .peer-search { margin: 12px 0 7px; }
@@ -784,12 +773,6 @@ JAVASCRIPT = r"""
     approachCursor: null,
     approachQuery: "",
     approachRequest: 0,
-    callCursor: null,
-    artifactCursor: null,
-    boardVersion: null,
-    pendingBoardVersion: null,
-    boardRequest: 0,
-    boardLoading: false,
     peerNames: new Set(
       [...document.querySelectorAll(".peer-name")]
         .map((node) => node.textContent.trim().toLocaleLowerCase("en-US"))
@@ -826,7 +809,7 @@ JAVASCRIPT = r"""
       let title = "이 목록에 없는 peer 멘션 · 이름을 검색해 확인하세요.";
       if (name === "all") {
         kind = "all";
-        title = "Resident peer에게 알림을 남깁니다. 실행 한도 안에서 순차 처리됩니다.";
+        title = "은퇴하지 않은 모든 peer에게 알림을 남깁니다.";
       } else if (name === "human" || name === "user") {
         kind = "human";
         title = "웹 포럼 사용자를 향한 멘션";
@@ -1954,11 +1937,6 @@ JAVASCRIPT = r"""
       peerName.style.color = `hsl(${authorHue(agent.name)} 60% 74%)`;
       text.append(peerName);
       text.append(make("div", "peer-meta", `${agent.model} · ${agent.effort} · ${agent.process_state}`));
-      if (agent.participation_state === "parked" && agent.process_state !== "retired") {
-        const participation = make("div", "peer-participation", "Parked · 유휴 보존");
-        participation.title = "세션과 참여 기록을 보존한 유휴 상태";
-        text.append(participation);
-      }
       if (agent.retire_reason) text.append(make("div", "peer-reason", agent.retire_reason));
       row.append(text);
       list.append(row);
@@ -1970,8 +1948,6 @@ JAVASCRIPT = r"""
 
   const renderPeerSummary = (summary) => {
     document.getElementById("peer-total").textContent = `Peers ${summary.total_count}`;
-    document.getElementById("peer-participation").textContent =
-      `Resident ${summary.resident_count || 0} · Parked ${summary.parked_count || 0}`;
     document.getElementById("peer-states").textContent =
       `Running ${summary.states.running || 0} · Dormant ${summary.states.dormant || 0}`;
     document.getElementById("peer-refresh").hidden = summary.version === state.peerVersion;
@@ -2043,7 +2019,7 @@ JAVASCRIPT = r"""
     const heading = make("h3");
     heading.append(discussionLink("approach", item.id, item.hypothesis));
     card.append(heading, make("p", "investigation-note", `다음 확인: ${item.next_check}`));
-    card.append(make("div", "investigation-note", `참여 ${item.member_count || 0}명 · Running ${item.running_members || 0} · Parked ${item.parked_members || 0}`));
+    card.append(make("div", "investigation-note", `참여 ${item.member_count || 0}명 · Running ${item.running_members || 0}`));
     if (item.hypothesis_truncated || item.next_check_truncated) card.append(make("p", "investigation-note", "일부 내용 미리보기 · 가설을 눌러 전체 보기"));
     return card;
   };
@@ -2302,7 +2278,7 @@ JAVASCRIPT = r"""
           const row = make("div", "member-row");
           row.append(make("strong", "", member.name || member.agent_name || member.agent_id));
           row.append(make("p", "investigation-note", member.focus || "참여 중"));
-          if (member.process_state) row.append(make("span", "investigation-note", `${member.process_state}${member.participation_state === "parked" ? " · Parked" : ""}`));
+          if (member.process_state) row.append(make("span", "investigation-note", member.process_state));
           return row;
         }, "아직 합류한 참여자가 없습니다.", "참여자 더 보기");
         inner.append(make("h2", "comments-heading", "중간 성과"));
@@ -2394,127 +2370,6 @@ JAVASCRIPT = r"""
     }
   };
 
-  const renderCalls = (items, append) => {
-    const list = document.getElementById("call-list");
-    if (!append) list.replaceChildren();
-    for (const item of items) {
-      const link = make("a", "coordination-card", item.reason || "논의 참여 모집");
-      link.href = `/?run=${encodedRun}&thread=${encodeURIComponent(item.thread_id)}`;
-      link.append(make("span", "peer-meta", "원래 논의 열기"));
-      link.addEventListener("click", (event) => {
-        event.preventDefault();
-        selectThread(item.thread_id, { updateHistory: true });
-      });
-      list.append(link);
-    }
-    if (!append && !items.length) list.append(make("div", "peer-meta", "열린 모집이 없습니다."));
-  };
-
-  const renderArtifacts = (items, append) => {
-    const list = document.getElementById("artifact-list");
-    if (!append) list.replaceChildren();
-    for (const item of items) {
-      const link = make("a", "coordination-card", item.note || `${item.file_count}개 파일의 변경 사항`);
-      link.href = `/?run=${encodedRun}&artifact=${encodeURIComponent(item.id)}`;
-      link.append(make("span", "peer-meta", `${item.author} · ${item.file_count}개 파일 · ${item.integrated_at ? "적용됨" : "게시됨"}`));
-      link.addEventListener("click", (event) => {
-        event.preventDefault();
-        selectArtifact(item.id);
-      });
-      list.append(link);
-    }
-    if (!append && !items.length) list.append(make("div", "peer-meta", "아직 공유된 결과물이 없습니다."));
-  };
-
-  const loadCoordination = async ({ reset = false, kind = null } = {}) => {
-    if (state.boardLoading) return;
-    state.boardLoading = true;
-    const requestNumber = ++state.boardRequest;
-    const wantedVersion = state.pendingBoardVersion;
-    const calls = kind !== "artifacts";
-    const artifacts = kind !== "calls";
-    try {
-      const callParams = new URLSearchParams({ limit: "5", state: "open" });
-      const artifactParams = new URLSearchParams({ limit: "5" });
-      if (!reset && state.callCursor) callParams.set("after", state.callCursor);
-      if (!reset && state.artifactCursor) artifactParams.set("after", state.artifactCursor);
-      const [callPage, artifactPage] = await Promise.all([
-        calls ? request(`/api/runs/${encodedRun}/calls?${callParams}`) : null,
-        artifacts ? request(`/api/runs/${encodedRun}/artifacts?${artifactParams}`) : null,
-      ]);
-      if (requestNumber !== state.boardRequest) return;
-      if (callPage) {
-        renderCalls(callPage.items, !reset);
-        state.callCursor = callPage.next_cursor;
-        document.getElementById("call-more").hidden = !state.callCursor;
-      }
-      if (artifactPage) {
-        renderArtifacts(artifactPage.items, !reset);
-        state.artifactCursor = artifactPage.next_cursor;
-        document.getElementById("artifact-more").hidden = !state.artifactCursor;
-      }
-      if (reset) state.boardVersion = wantedVersion;
-      document.getElementById("coordination-refresh").hidden = state.boardVersion === state.pendingBoardVersion;
-    } catch (error) {
-      showToast(`모집과 결과물을 가져오지 못했습니다: ${error.message}`);
-    } finally {
-      state.boardLoading = false;
-    }
-  };
-
-  const renderScaling = (data) => {
-    if (!data) return;
-    const population = data.population || {};
-    const workspace = data.workspaces || {};
-    const visible = Boolean(population.configured || workspace.mode || workspace.artifact_count);
-    document.getElementById("run-status").hidden = !visible;
-    document.getElementById("collaboration-board").hidden = !visible;
-    if (!visible) return;
-    const counts = document.getElementById("run-status-counts");
-    counts.replaceChildren();
-    const policy = population.policy || {};
-    const limit = (value) => value === undefined || value === null ? "—" : String(value);
-    const boardLink = (label, target) => {
-      const button = make("button", "run-status-link", label);
-      button.type = "button";
-      button.addEventListener("click", () => document.getElementById(target).scrollIntoView({ block: "center" }));
-      return button;
-    };
-    const residents = population.resident_agents ?? population.live_agents ?? 0;
-    if (population.configured) {
-      const participation = make("span", "", `Resident ${residents}/${limit(policy.max_agents)} · Parked ${population.parked_agents || 0} · Running ${population.running_agents || 0}`);
-      participation.title = "Resident는 현재 참여 인원, Parked는 세션과 참여 기록을 보존한 유휴 인원, Running은 실제 실행 중인 모델 호출입니다.";
-      counts.append(participation);
-      counts.append(boardLink(`모집 ${population.open_calls || 0}개 (준비 ${population.ready_calls || 0}) · 미완료 제안 ${population.pending_offers || 0}건`, "call-list"));
-      counts.append(make("span", "", `세션 예약 ${population.total_births || 0}/${limit(policy.max_births)} · 생성 여유 ${Math.floor(population.birth_tokens || 0)}/${limit(policy.birth_burst)}`));
-      counts.append(make("span", "", `호출 ${population.invocations_started || 0}/${limit(policy.max_invocations)}`));
-    }
-    if (workspace.artifact_count) {
-      counts.append(boardLink(`이전 결과물 ${workspace.artifact_count}개`, "artifact-list"));
-    }
-    let reason = "";
-    if (population.configured) {
-      const awaitingBirth = population.ready_calls > 0 || population.initial_remaining > 0;
-      if (population.invocations_exhausted) reason = "호출 한도에 도달했습니다.";
-      else if (!population.enabled) reason = "자동 충원이 꺼져 있습니다.";
-      else if (population.pending_offers > 0) reason = `기존 동료에게 보낸 참여 제안 ${population.pending_offers}건의 실제 호출 완료를 기다립니다.`;
-      else if (population.births_exhausted) reason = "신규 참여 세션 한도에 도달했습니다. 기존 동료는 참여할 수 있습니다.";
-      else if (awaitingBirth && residents >= policy.max_agents) reason = "Resident 한도에서 추가 합류를 기다립니다. Parked 동료의 세션과 참여 기록은 보존됩니다.";
-      else if (awaitingBirth && population.next_birth_in_seconds > 0) reason = `추가 참여 슬롯까지 약 ${Math.ceil(population.next_birth_in_seconds)}초`;
-      else if (population.initial_remaining > 0) reason = `초기 참여자 ${population.initial_remaining}명의 합류를 기다립니다.`;
-      else if (population.ready_calls > 0) reason = `미충족 모집 ${population.ready_calls}개 · 실행 여유가 생기면 추가 참여를 검토합니다.`;
-      else if (population.open_calls > 0) reason = "기존 동료의 참여를 기다리는 모집이 있습니다.";
-      else reason = "열린 모집이 생기면 기존 동료부터 참여할 수 있습니다.";
-    }
-    document.getElementById("run-status-reason").textContent = reason;
-    state.pendingBoardVersion = JSON.stringify([
-      population.open_calls, population.ready_calls, population.pending_offers, population.total_births,
-      workspace.artifact_count, state.highWater,
-    ]);
-    if (state.boardVersion === null) loadCoordination({ reset: true });
-    else document.getElementById("coordination-refresh").hidden = state.boardVersion === state.pendingBoardVersion;
-  };
-
   const renderStats = (statistics) => {
     document.getElementById("stat-threads").textContent = statistics.thread_count;
     document.getElementById("stat-comments").textContent = statistics.comment_count;
@@ -2546,7 +2401,6 @@ JAVASCRIPT = r"""
       advanceMentionCursor(mentionData.cursor);
       pollAgain = Boolean(mentionData.has_more);
       renderPeerSummary(data.agent_summary);
-      renderScaling(data.scaling);
       document.getElementById("notification-counts").textContent =
         `알림 대기 ${data.notifications.pending_agents}명 · ${data.notifications.pending_events}건`;
       if (data.statistics) renderStats(data.statistics);
@@ -2649,9 +2503,6 @@ JAVASCRIPT = r"""
   });
   document.getElementById("approach-more").addEventListener("click", () => loadApproaches());
   document.getElementById("peer-refresh").addEventListener("click", () => loadPeers({ reset: true }));
-  document.getElementById("call-more").addEventListener("click", () => loadCoordination({ kind: "calls" }));
-  document.getElementById("artifact-more").addEventListener("click", () => loadCoordination({ kind: "artifacts" }));
-  document.getElementById("coordination-refresh").addEventListener("click", () => loadCoordination({ reset: true }));
   document.getElementById("tag-all").addEventListener("click", () => {
     tagIntoComposer("@all");
   });

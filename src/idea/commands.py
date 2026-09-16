@@ -13,7 +13,6 @@ from .forum import Forum
 PEER_COMMANDS = frozenset({
     "recent", "inbox", "discover", "peers", "follow", "unfollow", "following",
     "read", "changes", "search", "post", "reply", "reply-trigger", "attach", "retire",
-    "recruit", "calls", "volunteer", "cancel-call", "templates", "population",
     "artifacts", "artifact",
     "approach", "approaches", "read-approach", "join", "leave", "members",
     "report", "reports", "read-report", "adopt",
@@ -184,23 +183,6 @@ def dispatch_forum(
     if command == "retire":
         value = forum.retire_agent(identity(), payload.get("reason", ""))
         return {key: item for key, item in value.items() if key not in {"session_id", "pid"}}
-    if command in {"recruit", "calls", "volunteer", "cancel-call", "templates", "population"}:
-        from .population import PopulationStore
-
-        store = PopulationStore(forum, run_id)
-        if command == "population":
-            return store.summary()
-        if command == "templates":
-            return {"items": store.templates(), "next_cursor": None}
-        if command == "calls":
-            return store.list_calls(state=payload.get("state", "open"), limit=limit, after=after)
-        if command == "recruit":
-            return store.open_call(identity(), thread(payload.get("thread_id")), payload["reason"],
-                                   template_id=payload.get("template_id"), ttl=payload.get("ttl"),
-                                   request_key=payload.get("request_key"))
-        if command == "volunteer":
-            return store.volunteer(identity(), payload["call_id"])
-        return store.cancel_call(identity(), payload["call_id"])
     from .workspaces import WorkspaceStore
 
     workspaces = WorkspaceStore(forum, run_id)

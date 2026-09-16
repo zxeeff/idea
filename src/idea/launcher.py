@@ -1,27 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Awaitable, Callable, Iterable
 
-from .domain import AgentProfile, Effort, ProcessState, Provider
 from .communication import CommunicationStore
-from .execution import ExecutionStore, RunLock
+from .domain import AgentProfile, Effort, ProcessState, Provider
+from .execution import RunLock
 from .forum import Forum
-from .prompts import (
-    blocked_restart_task, resume_task, select_wake_context, shared_prompt, user_task, wake_task,
-)
-from .providers import (
-    Invocation,
-    build_invocation,
-    log_reports_final_safeguard_refusal,
-    run_agent,
-    validate_workspace_boundary,
-)
+from .prompts import blocked_restart_task, resume_task, select_wake_context, shared_prompt, user_task, wake_task
+from .providers import Invocation, build_invocation, log_reports_final_safeguard_refusal, run_agent, validate_workspace_boundary
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,136 +19,35 @@ class PreparedPeer:
     profile: AgentProfile
     agent: dict[str, object]
     invocation: Invocation
-    start_requested: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedRun:
     run: dict[str, object]
     peers: tuple[PreparedPeer, ...]
-    allow_join: bool = True
 
 
 def _delivery_ids(events: Iterable[dict]) -> list[int]:
-    """Expand only selected notices into the original delivery journal IDs."""
-    return sorted({
-        int(identifier)
-        for event in events
-        for identifier in event.get("_delivery_event_ids", [event["id"]])
-    })
+    return sorted({int(identifier) for event in events for identifier in event.get("_delivery_event_ids", [event["id"]])})
 
 
-_LEGACY_DEFAULT_HANDLES = {
-    "luna-1": "luna-medium",
-    "terra-1": "terra-medium",
-    "terra-2": "terra-high",
-    "sol-1": "sol-high",
-    "sol-2": "sol-xhigh",
-    "sol-3": "sol-max",
-    "daybreak-blue-1": "daybreak-ultra",
-    "daybreak-blue-2": "daybreak-max",
-    "sonnet-1": "sonnet-medium",
-    "sonnet-2": "sonnet-high",
-    "opus-1": "opus-high",
-    "opus-2": "opus-high-2",
-    "opus-3": "opus-xhigh",
-    "opus-4": "opus-xhigh-2",
-    "opus-5": "opus-max",
-    "opus-6": "opus-max-2",
-}
-
-
-def _profile_signature(profile: AgentProfile) -> tuple[str, str, str]:
-    return (profile.provider.value, profile.model, profile.effort.value)
-
-
-def _record_signature(record: dict[str, object]) -> tuple[str, str, str]:
-    return (
-        str(record["provider"]),
-        str(record["model"]),
-        str(record["effort"]),
-    )
-
-
-def _registered_peer(forum: Forum, run: dict[str, object], record: dict[str, object], *, task: str | None = None) -> PreparedPeer:
-    profile = AgentProfile(name=str(record["name"]), provider=Provider(str(record["provider"])),
-                           model=str(record["model"]), effort=Effort(str(record["effort"])))
-    workspace = Path(str(run["workspace"]))
-    if task is None:
-        from .population import PopulationStore
-
-        birth = PopulationStore(forum, str(run["id"])).birth_for_agent(str(record["id"]))
-        task = user_task(str(run["goal"]))
-        if birth and birth.get("call_id"):
-            invitation = {key: birth.get(key) for key in ("call_id", "thread_id", "reason")}
-            task = ("A public invitation introduced you to this discussion. Read its evidence and "
-                    "choose your own useful contribution; the inviter does not assign your role.\n"
-                    + json.dumps(invitation, ensure_ascii=False) + "\n\n" + task)
-    invocation = build_invocation(
-        profile=profile, system_prompt=shared_prompt(name=profile.name, peer_names=()),
-        task_prompt=task, workspace=workspace, state_dir=forum.state_dir, run_id=str(run["id"]),
-        agent=record, resume_session_id=str(record["session_id"]) if record.get("session_id") else None,
-    )
-    return PreparedPeer(profile=profile, agent=record, invocation=invocation)
-
-
-def prepare_run(
-    *,
-    forum: Forum,
-    goal: str,
-    workspace: Path,
-    profiles: Iterable[AgentProfile],
-    population_policy=None,
-    adaptive: bool = False,
-) -> PreparedRun:
+def prepare_run(*, forum: Forum, goal: str, workspace: Path, profiles: Iterable[AgentProfile]) -> PreparedRun:
     workspace = workspace.expanduser().resolve()
     if not workspace.is_dir():
         raise NotADirectoryError(f"workspace is not a directory: {workspace}")
     validate_workspace_boundary(workspace=workspace, state_dir=forum.state_dir)
     profiles = tuple(profiles)
     run = forum.create_run(goal, workspace)
-    forum.create_thread(
-        str(run["id"]),
-        "user",
-        "Objective",
-        goal,
-    )
-    if population_policy is not None and adaptive:
-        from .population import PopulationStore
-
-        population = PopulationStore(forum, str(run["id"]))
-        population.configure(profiles=profiles, policy=population_policy, enabled=True)
-        peers = []
-        while birth := population.reserve_birth(initial=True):
-            try:
-                peers.append(_registered_peer(forum, run, birth["agent"]))
-                population.finish_birth(birth["birth_id"], succeeded=True)
-            except Exception as error:
-                population.finish_birth(birth["birth_id"], succeeded=False, error=str(error))
-                raise
-        return PreparedRun(run=run, peers=tuple(peers))
-    peers: list[PreparedPeer] = []
+    forum.create_thread(str(run["id"]), "user", "Objective", goal)
+    peers = []
     for profile in profiles:
         agent = forum.register_agent(str(run["id"]), profile)
-        system_prompt = shared_prompt(
-            name=profile.name,
-            peer_names=(peer.name for peer in profiles),
-        )
-        invocation = build_invocation(
-            profile=profile,
-            system_prompt=system_prompt,
-            task_prompt=user_task(goal),
-            workspace=workspace,
-            state_dir=forum.state_dir,
-            run_id=str(run["id"]),
-            agent=agent,
-        )
-        peers.append(PreparedPeer(profile=profile, agent=agent, invocation=invocation))
-    if population_policy is not None:
-        from .population import PopulationStore
-
-        PopulationStore(forum, str(run["id"])).configure(profiles=profiles, policy=population_policy, enabled=False)
-    return PreparedRun(run=run, peers=tuple(peers))
+        peers.append(PreparedPeer(profile, agent, build_invocation(
+            profile=profile, system_prompt=shared_prompt(name=profile.name, peer_names=(item.name for item in profiles)),
+            task_prompt=user_task(goal), workspace=workspace, state_dir=forum.state_dir,
+            run_id=str(run["id"]), agent=agent,
+        )))
+    return PreparedRun(run, tuple(peers))
 
 
 def _pid_is_alive(pid: object) -> bool:
@@ -173,297 +62,75 @@ def _pid_is_alive(pid: object) -> bool:
     return True
 
 
-def _has_owned_attempt(forum: Forum, agent_id: str) -> bool:
-    """Updated launchers fence providers with RunLock; legacy PIDs still need care."""
-    with forum._connection() as connection:
-        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_attempts'").fetchone() is None:
-            return False
-        return connection.execute(
-            """SELECT 1 FROM execution_attempts t JOIN execution_requests r ON r.id=t.request_id
-               WHERE r.agent_id=? LIMIT 1""", (agent_id,),
-        ).fetchone() is not None
-
-
-def _prepare_resume(
-    *,
-    forum: Forum,
-    run_id: str,
-    profile_names: Iterable[str] | None = None,
-    fresh_sessions: bool = False,
-    reset_processes: bool = True,
-    additional_profiles: Iterable[AgentProfile] = (),
-) -> PreparedRun:
-    """Re-enter an interrupted run without creating a planner or a new forum."""
-
+def _prepare_resume(*, forum: Forum, run_id: str, profile_names: Iterable[str] | None = None,
+                    fresh_sessions: bool = False, reset_processes: bool = True) -> PreparedRun:
     run = forum.get_run(run_id)
     workspace = Path(str(run["workspace"])).expanduser().resolve()
     validate_workspace_boundary(workspace=workspace, state_dir=forum.state_dir)
-    # Old isolated sessions remember a different cwd. Migrate each one only
-    # once, when that peer is actually resumed in the original workspace.
-    migration_pending: set[str] = set()
-    with forum._connection() as connection:
-        if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_policies'"
-        ).fetchone():
-            legacy = connection.execute(
-                "SELECT mode FROM workspace_policies WHERE run_id=?", (run_id,)
-            ).fetchone()
-            if legacy and legacy["mode"] == "isolated" and connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_workspaces'"
-            ).fetchone():
-                connection.execute("""CREATE TABLE IF NOT EXISTS shared_workspace_migrations (
-                    agent_id TEXT PRIMARY KEY, run_id TEXT NOT NULL
-                )""")
-                migration_pending = {str(row["agent_id"]) for row in connection.execute(
-                    """SELECT agent_id FROM agent_workspaces WHERE run_id=? AND agent_id NOT IN
-                       (SELECT agent_id FROM shared_workspace_migrations WHERE run_id=?)""",
-                    (run_id, run_id),
-                )}
     records = forum.list_agents(run_id)
-    additional_profiles = tuple(additional_profiles)
-    known_by_name = {str(record["name"]): record for record in records}
-
-    # Keep persisted handles stable while recognizing the default-handle rename
-    # during --expand-defaults. A signature check prevents an unrelated custom
-    # profile that reused an old name from being mistaken for the old default.
-    aliases: dict[str, str] = {}
-    known_names = set(known_by_name)
-    for profile in additional_profiles:
-        record = known_by_name.get(profile.name)
-        if record is not None:
-            if _record_signature(record) != _profile_signature(profile):
-                raise ValueError(
-                    f"profile {profile.name!r} already exists with different execution settings"
-                )
-            continue
-
-        legacy_name = _LEGACY_DEFAULT_HANDLES.get(profile.name)
-        legacy_record = known_by_name.get(legacy_name) if legacy_name else None
-        if (
-            legacy_record is not None
-            and _record_signature(legacy_record) == _profile_signature(profile)
-        ):
-            aliases[profile.name] = str(legacy_record["name"])
-            continue
-        if profile.name in known_names:
-            raise ValueError(f"duplicate additional profile name: {profile.name!r}")
-        from .population import PopulationStore
-
-        population = PopulationStore(forum, run_id)
-        if population.configured() and population.summary()["live_agents"] >= population.policy().max_agents:
-            raise ValueError("the persisted population limit does not allow more profiles")
-        forum.register_agent(run_id, profile)
-        known_names.add(profile.name)
-    records = forum.list_agents(run_id)
-    from .population import PopulationStore
-
-    population = PopulationStore(forum, run_id)
-    if population.configured():
-        population.configure()
-    requested = set(profile_names or ())
-    known = {str(record["name"]) for record in records}
-    missing = requested - known - set(aliases)
+    wanted = set(profile_names or ())
+    missing = wanted - {str(record["name"]) for record in records}
     if missing:
         raise ValueError(f"unknown profiles in run: {', '.join(sorted(missing))}")
-    wanted = {aliases.get(name, name) for name in requested}
-    all_profiles = tuple(
-        AgentProfile(
-            name=str(record["name"]),
-            provider=Provider(str(record["provider"])),
-            model=str(record["model"]),
-            effort=Effort(str(record["effort"])),
-        )
-        for record in records
-    )
-    peers: list[PreparedPeer] = []
+    all_profiles = tuple(AgentProfile(str(record["name"]), Provider(str(record["provider"])),
+                                      str(record["model"]), Effort(str(record["effort"]))) for record in records)
+    peers = []
     for record, profile in zip(records, all_profiles, strict=True):
-        if wanted and profile.name not in wanted:
+        if wanted and profile.name not in wanted or record["process_state"] == ProcessState.RETIRED.value:
             continue
-        if record["process_state"] == ProcessState.RETIRED.value:
+        if record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"]):
             continue
-        if (record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"])
-                and not _has_owned_attempt(forum, str(record["id"]))):
-            continue
-        rebase_session = str(record["id"]) in migration_pending
         was_blocked = record["process_state"] == ProcessState.BLOCKED.value
-        if (
-            not was_blocked
-            and record["process_state"] == ProcessState.FAILED.value
-            and profile.provider is Provider.ANTHROPIC
-        ):
-            was_blocked = log_reports_final_safeguard_refusal(
-                forum.state_dir / "runs" / run_id / "logs" / f"{profile.name}.jsonl"
-            )
-        keep_parked = record.get("participation_state") == "parked" and not (
-            wanted or fresh_sessions or rebase_session
-        )
-        restart_fresh = fresh_sessions or rebase_session or (was_blocked and not keep_parked)
+        if not was_blocked and record["process_state"] == ProcessState.FAILED.value and profile.provider is Provider.ANTHROPIC:
+            was_blocked = log_reports_final_safeguard_refusal(forum.state_dir / "runs" / run_id / "logs" / f"{profile.name}.jsonl")
+        restart_fresh = fresh_sessions or was_blocked
         session_id = None if restart_fresh else record.get("session_id")
-        if reset_processes and not keep_parked:
-            if not forum.reset_process_observation(str(record["id"]), clear_session=restart_fresh):
-                continue
-            if rebase_session:
-                with forum._connection() as connection:
-                    connection.execute(
-                        "INSERT OR IGNORE INTO shared_workspace_migrations (agent_id, run_id) VALUES (?, ?)",
-                        (str(record["id"]), run_id),
-                    )
+        if reset_processes and not forum.reset_process_observation(str(record["id"]), clear_session=restart_fresh):
+            continue
         if restart_fresh:
             record["session_id"] = None
-        system_prompt = shared_prompt(
-            name=profile.name,
-            peer_names=(peer.name for peer in all_profiles),
-        )
-        invocation = build_invocation(
-            profile=profile,
-            system_prompt=system_prompt,
-            task_prompt=(
-                blocked_restart_task(str(run["goal"]))
-                if was_blocked
-                else resume_task(str(run["goal"]))
-            ),
-            workspace=workspace,
-            state_dir=forum.state_dir,
-            run_id=run_id,
-            agent=record,
+        peers.append(PreparedPeer(profile, record, build_invocation(
+            profile=profile, system_prompt=shared_prompt(name=profile.name, peer_names=(item.name for item in all_profiles)),
+            task_prompt=blocked_restart_task(str(run["goal"])) if was_blocked else resume_task(str(run["goal"])),
+            workspace=workspace, state_dir=forum.state_dir, run_id=run_id, agent=record,
             resume_session_id=str(session_id) if session_id else None,
-        )
-        peers.append(PreparedPeer(
-            profile=profile, agent=record, invocation=invocation,
-            start_requested=bool(wanted or fresh_sessions or rebase_session),
-        ))
-    if not peers and not (population.configured() and population.summary()["enabled"] and not wanted):
+        )))
+    if not peers:
         raise RuntimeError("no stopped peer is available to resume")
-    return PreparedRun(run=run, peers=tuple(peers), allow_join=not wanted)
+    return PreparedRun(run, tuple(peers))
 
 
-async def run_reactor(
-    *,
-    forum: Forum,
-    prepared: PreparedRun,
-    on_started: Callable[[PreparedRun], None] | None = None,
-    runner: Callable[..., Awaitable[int]] = run_agent,
-    poll_interval: float = 0.5,
-    max_concurrent: int | None = None,
-    max_codex: int | None = None,
-    max_claude: int | None = None,
-    run_lock: RunLock | None = None,
-) -> list[int]:
-    """Deliver notifications within shared process limits; peers choose their work."""
-    if poll_interval <= 0:
-        raise ValueError("poll_interval must be positive")
-    run_id = str(prepared.run["id"])
-    if run_lock is not None:
-        if run_lock.fd is None or run_lock.path != RunLock(forum.state_dir, run_id).path:
-            raise ValueError("run_lock must be held for this run")
-        return await _run_reactor_locked(
-            forum=forum, prepared=prepared, on_started=on_started, runner=runner,
-            poll_interval=poll_interval, max_concurrent=max_concurrent,
-            max_codex=max_codex, max_claude=max_claude, lock_fd=run_lock.fd,
-        )
-    with RunLock(forum.state_dir, run_id) as lock:
-        assert lock.fd is not None
-        return await _run_reactor_locked(
-            forum=forum, prepared=prepared, on_started=on_started, runner=runner,
-            poll_interval=poll_interval, max_concurrent=max_concurrent,
-            max_codex=max_codex, max_claude=max_claude, lock_fd=lock.fd,
-        )
-
-
-async def _run_reactor_locked(
-    *, forum: Forum, prepared: PreparedRun,
-    on_started: Callable[[PreparedRun], None] | None,
-    runner: Callable[..., Awaitable[int]], poll_interval: float,
-    max_concurrent: int | None, max_codex: int | None, max_claude: int | None,
-    lock_fd: int,
-) -> list[int]:
-    run_id = str(prepared.run["id"])
-    goal = str(prepared.run["goal"])
+async def _run_fixed_reactor(*, forum: Forum, prepared: PreparedRun,
+                             on_started: Callable[[PreparedRun], None] | None,
+                             runner: Callable[..., Awaitable[int]], poll_interval: float,
+                             lock_fd: int) -> list[int]:
+    run_id, goal = str(prepared.run["id"]), str(prepared.run["goal"])
     workspace = Path(str(prepared.run["workspace"])).expanduser().resolve()
     log_dir = forum.state_dir / "runs" / run_id / "logs"
     peers = {str(peer.agent["id"]): peer for peer in prepared.peers}
-    from .population import PopulationStore
-    population = PopulationStore(forum, run_id)
-    managed = population.configured()
-    store = ExecutionStore(forum, run_id, population=population if managed else None)
     communication = CommunicationStore(forum, run_id)
     communication.configure()
-    policy = store.configure(
-        max_concurrent=max_concurrent, max_codex=max_codex, max_claude=max_claude
-    )
-    store.recover()
-    active: dict[str, tuple[asyncio.Task[int], int, str]] = {}
+    active: dict[str, tuple[asyncio.Task[int], list[int]]] = {}
     latest_codes: dict[str, int] = {}
-    held: dict[str, int] = {}
-    next_idle_cleanup = 0.0
-    for agent_id in peers:
-        if peers[agent_id].start_requested or forum.get_agent(agent_id).get("participation_state") != "parked":
-            store.enqueue(agent_id, kind="start")
-        else:
-            held[agent_id] = store.held_through(agent_id)
+
+    def start(peer: PreparedPeer, invocation: Invocation, delivery_ids: list[int]) -> None:
+        active[str(peer.agent["id"])] = (asyncio.create_task(runner(
+            forum=forum, run_id=run_id, agent=peer.agent, profile=peer.profile,
+            invocation=replace(invocation, inherited_fds=(lock_fd,)), log_dir=log_dir,
+        ), name=peer.profile.name), delivery_ids)
+
+    for peer in peers.values():
+        start(peer, peer.invocation, [])
     if on_started:
         on_started(prepared)
-
-    def enqueue_notifications() -> dict[str, dict[str, object]]:
-        records = {str(item["id"]): item for item in forum.list_agents(run_id)}
-        queued_ids = {str(request["agent_id"]) for request in store.queued()}
-        for item in forum.pending_notification_agents(run_id, limit=500):
-            agent_id = str(item["agent_id"])
-            if agent_id not in peers or agent_id in active or agent_id in queued_ids:
-                continue
-            state = records[agent_id]["process_state"]
-            if state == ProcessState.RETIRED.value:
-                continue
-            if state in {ProcessState.BLOCKED.value, ProcessState.FAILED.value}:
-                signal = int(item["last_explicit_event_id"])
-            else:
-                signal = int(item["last_event_id"])
-            if signal <= held.get(agent_id, 0):
-                continue
-            store.enqueue(agent_id)
-            queued_ids.add(agent_id)
-        return records
-
-    def invocation_for(
-        peer: PreparedPeer, record: dict[str, object], kind: str,
-        triggers: list[dict[str, object]], background: list[dict[str, object]],
-        overflow: dict[str, object],
-    ) -> Invocation:
-        # Only explicit mentions carry reply-trigger routing. A followed thread
-        # update is public context; it does not impersonate a direct request.
-        mentions = [event for event in triggers
-                    if event.get("notification_reason") in {"mention", "broadcast"}]
-        human = [event for event in mentions
-                 if str(event["author"]).casefold() in {"human", "user"}]
-        activation = [event for event in mentions if event.get("activation_trigger") is True]
-        primary = max(activation or human or mentions, key=lambda event: int(event["id"])) if mentions else None
-        was_blocked = record["process_state"] == ProcessState.BLOCKED.value
-        if triggers:
-            task_prompt = (
-                blocked_restart_task(goal, triggers, background, overflow=overflow)
-                if was_blocked else wake_task(goal, triggers, background, overflow=overflow)
-            )
-        elif kind == "start":
-            task_prompt = peer.invocation.argv[-1]
-        else:
-            task_prompt = resume_task(goal)
-        session_id = None if was_blocked else record.get("session_id")
-        invocation = build_invocation(
-            profile=peer.profile,
-            system_prompt=shared_prompt(name=peer.profile.name, peer_names=()),
-            task_prompt=task_prompt, workspace=peer.invocation.cwd, state_dir=forum.state_dir,
-            run_id=run_id, agent=record,
-            resume_session_id=str(session_id) if session_id else None,
-            trigger_event_id=int(primary["id"]) if primary else None,
-            trigger_thread_id=str(primary["thread_id"]) if primary and primary.get("thread_id") else None,
-        )
-        return replace(invocation, inherited_fds=(lock_fd,))
-
     try:
         while True:
-            # Capture completions before admitting another process. RETIRED in
-            # the forum is a peer decision, not proof its process has exited.
-            for agent_id, (task, request_id, attempt_id) in tuple(active.items()):
+            if active:
+                await asyncio.wait([item[0] for item in active.values()], timeout=poll_interval,
+                                   return_when=asyncio.FIRST_COMPLETED)
+            else:
+                await asyncio.sleep(poll_interval)
+            for agent_id, (task, delivery_ids) in tuple(active.items()):
                 if not task.done():
                     continue
                 try:
@@ -474,186 +141,83 @@ async def _run_reactor_locked(
                     code = 1
                     forum.set_process_state(agent_id, ProcessState.FAILED, exit_code=1)
                 latest_codes[agent_id] = code
-                delivered = code == 0 and forum.get_agent(agent_id)["process_state"] not in {
-                    ProcessState.BLOCKED.value, ProcessState.FAILED.value,
-                }
-                store.finish(
-                    request_id, attempt_id, exit_code=code, delivery_succeeded=delivered,
-                )
-                held[agent_id] = 0 if delivered else store.held_through(agent_id)
+                if code == 0 and forum.get_agent(agent_id)["process_state"] not in {ProcessState.BLOCKED.value, ProcessState.FAILED.value}:
+                    forum.acknowledge_notifications(agent_id, delivery_ids)
                 del active[agent_id]
 
-            # Account for already pending work before considering extra capacity.
-            enqueue_notifications()
-            if managed and population.enabled and time.monotonic() >= next_idle_cleanup:
-                population.park_idle_peers(available_agent_ids=peers)
-                next_idle_cleanup = time.monotonic() + min(30.0, population.policy().idle_timeout)
-            population_status = population.summary() if managed else None
-            if managed and prepared.allow_join:
-                if not population_status["exhausted"]:
-                    birth = next((item for item in population.pending_births()
-                                  if str(item["agent"]["id"]) not in peers), None)
-                    if birth is None and population_status["enabled"]:
-                        birth = population.reserve_birth(
-                            initial=population_status["initial_remaining"] > 0,
-                            execution_policy=policy, available_agent_ids=peers,
-                        )
-                    if birth:
-                        agent_id = str(birth["agent"]["id"])
-                        try:
-                            peer = _registered_peer(forum, prepared.run, birth["agent"])
-                            if forum.get_agent(agent_id)["process_state"] == ProcessState.RETIRED.value:
-                                population.finish_birth(birth["birth_id"], succeeded=False, error="Peer retired during admission")
-                            else:
-                                population.finish_birth(birth["birth_id"], succeeded=True)
-                                peers[agent_id] = peer
-                                store.enqueue(agent_id, kind="start")
-                        except Exception as error:
-                            latest_codes[agent_id] = 1
-                            population.finish_birth(birth["birth_id"], succeeded=False, error=str(error))
-                population_status = population.summary()
-
-            records = enqueue_notifications()
-
-            all_retired = all(
-                records[agent_id]["process_state"] == ProcessState.RETIRED.value
-                for agent_id in peers
-            )
-            can_still_join = bool(managed and prepared.allow_join and population_status["enabled"]
-                                 and not population_status["births_exhausted"]
-                                 and (population_status["initial_remaining"] or population_status["open_calls"]
-                                      or population_status["pending_births"]))
-            sessions_exhausted = bool(managed and population_status["births_exhausted"]
-                                     and not population_status["pending_births"] and all(
-                record["process_state"] in {ProcessState.RETIRED.value, ProcessState.BLOCKED.value}
-                or not record.get("session_id") for key, record in records.items() if key in peers
-            ))
-            if not active and (all_retired and not can_still_join
-                               or managed and population_status["exhausted"] or sessions_exhausted):
-                for agent_id in peers:
-                    if records[agent_id]["process_state"] == ProcessState.RETIRED.value:
-                        store.cancel_queued(agent_id)
-                return [latest_codes.get(agent_id, 0) for agent_id in dict.fromkeys((*peers, *latest_codes))]
-
-            for request in store.queued():
-                if len(active) >= policy.max_concurrent:
-                    break
-                agent_id = str(request["agent_id"])
-                if agent_id not in peers or agent_id in active:
+            records = {str(item["id"]): item for item in forum.list_agents(run_id)}
+            if peers and all(records[agent_id]["process_state"] == ProcessState.RETIRED.value for agent_id in peers):
+                return [latest_codes.get(agent_id, 0) for agent_id in peers]
+            for agent_id, peer in peers.items():
+                if agent_id in active:
                     continue
                 record = records[agent_id]
                 if record["process_state"] == ProcessState.RETIRED.value:
-                    store.cancel_queued(agent_id)
                     continue
-                if (record["process_state"] == ProcessState.RUNNING.value
-                        and _pid_is_alive(record["pid"]) and not _has_owned_attempt(forum, agent_id)):
+                if record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"]):
                     continue
-                peer = peers[agent_id]
-                provider_active = sum(
-                    peers[running_id].profile.provider == peer.profile.provider for running_id in active
-                )
-                if provider_active >= policy.provider_limit(peer.profile.provider.value):
+                notices = communication.pending_batch(agent_id)
+                if not notices:
                     continue
-                notifications = communication.pending_batch(
-                    agent_id, immediate=request["kind"] == "start"
-                )
-                if held.get(agent_id, 0):
-                    # Include the instruction which unlocked a parked batch,
-                    # even when older failed mentions fill the first page.
-                    fresh = forum.pending_notifications(
-                        agent_id, limit=1, after=held[agent_id], explicit_only=True
-                    )
-                    fresh_ids = {int(event["id"]) for event in fresh}
-                    notifications = [dict(event, activation_trigger=True) for event in fresh] + [event for event in notifications
-                                             if int(event["id"]) not in fresh_ids]
-                # A subscription is never a fresh-session restart signal.
-                if record["process_state"] in {
-                    ProcessState.BLOCKED.value, ProcessState.FAILED.value
-                } and request["kind"] != "start":
-                    if not any(event.get("notification_reason") in {"mention", "broadcast"}
-                               for event in notifications):
-                        store.cancel_queued(agent_id)
-                        continue
-                if request["kind"] == "notification" and not notifications:
-                    # Keep the durable request while a subscription burst settles.
-                    # Cancel only when its deliveries were actually withdrawn/read.
-                    if not forum.pending_notifications(agent_id, limit=1):
-                        store.cancel_queued(agent_id)
+                if record["process_state"] in {ProcessState.BLOCKED.value, ProcessState.FAILED.value} and not any(
+                    item.get("notification_reason") in {"mention", "broadcast"} for item in notices):
                     continue
                 page = forum.activity_page(agent_id, scope="following", limit=30)
-                notification_ids = set(_delivery_ids(notifications))
-                background = [event for event in page["items"]
-                              if int(event["id"]) not in notification_ids]
-                triggers, background, overflow = select_wake_context(notifications, background)
-                if request["kind"] == "notification" and not triggers:
-                    store.cancel_queued(agent_id)
+                notice_ids = set(_delivery_ids(notices))
+                triggers, background, overflow = select_wake_context(
+                    notices, [event for event in page["items"] if int(event["id"]) not in notice_ids])
+                if not triggers:
                     continue
-                request_id = int(request["id"])
-                event_ids = _delivery_ids(triggers)
-                attempt_id = store.claim(request_id, event_ids, policy)
-                if attempt_id is None:
+                was_blocked = record["process_state"] == ProcessState.BLOCKED.value
+                if not forum.reset_process_observation(agent_id, clear_session=was_blocked):
                     continue
-                try:
-                    invocation = invocation_for(
-                        peer, record, str(request["kind"]), triggers, background, overflow
-                    )
-                    admitted = forum.reset_process_observation(
-                        agent_id, clear_session=record["process_state"] == ProcessState.BLOCKED.value
-                    )
-                    if not admitted:
-                        store.cancel_claim(request_id, attempt_id)
-                        continue
-                    peer.agent.update(forum.get_agent(agent_id))
-                    active[agent_id] = (
-                        asyncio.create_task(
-                            runner(forum=forum, run_id=run_id, agent=peer.agent,
-                                   profile=peer.profile, invocation=invocation, log_dir=log_dir),
-                            name=peer.profile.name,
-                        ),
-                        request_id, attempt_id,
-                    )
-                except Exception:
-                    forum.set_process_state(agent_id, ProcessState.FAILED, exit_code=1)
-                    latest_codes[agent_id] = 1
-                    store.finish(
-                        request_id, attempt_id, exit_code=1,
-                    )
-                    held[agent_id] = store.held_through(agent_id)
-            if active:
-                await asyncio.wait(
-                    [item[0] for item in active.values()], timeout=poll_interval,
-                    return_when=asyncio.FIRST_COMPLETED,
+                current = forum.get_agent(agent_id)
+                mentions = [item for item in triggers if item.get("notification_reason") in {"mention", "broadcast"}]
+                primary = max(mentions, key=lambda item: int(item["id"])) if mentions else None
+                invocation = build_invocation(
+                    profile=peer.profile, system_prompt=shared_prompt(name=peer.profile.name, peer_names=()),
+                    task_prompt=blocked_restart_task(goal, triggers, background, overflow=overflow) if was_blocked else wake_task(goal, triggers, background, overflow=overflow),
+                    workspace=workspace, state_dir=forum.state_dir, run_id=run_id, agent=current,
+                    resume_session_id=None if was_blocked else (str(current["session_id"]) if current.get("session_id") else None),
+                    trigger_event_id=int(primary["id"]) if primary else None,
+                    trigger_thread_id=str(primary["thread_id"]) if primary and primary.get("thread_id") else None,
                 )
-            else:
-                await asyncio.sleep(poll_interval)
+                peer.agent.update(current)
+                start(peer, invocation, _delivery_ids(triggers))
     finally:
-        remaining = tuple(item[0] for item in active.values())
+        remaining = [item[0] for item in active.values()]
         for task in remaining:
             task.cancel()
         if remaining:
             await asyncio.gather(*remaining, return_exceptions=True)
-        # Requests remain running until the next lock owner recovers them. No
-        # notification is acknowledged on cancellation or uncertain completion.
 
 
-def prepare_resume(
-    *, forum: Forum, run_id: str,
-    profile_names: Iterable[str] | None = None,
-    fresh_sessions: bool = False, reset_processes: bool = True,
-    additional_profiles: Iterable[AgentProfile] = (),
-    run_lock: RunLock | None = None,
-) -> PreparedRun:
+async def run_reactor(*, forum: Forum, prepared: PreparedRun,
+                      on_started: Callable[[PreparedRun], None] | None = None,
+                      runner: Callable[..., Awaitable[int]] = run_agent,
+                      poll_interval: float = 0.5, run_lock: RunLock | None = None) -> list[int]:
+    if poll_interval <= 0:
+        raise ValueError("poll_interval must be positive")
+    run_id = str(prepared.run["id"])
     if run_lock is not None:
         if run_lock.fd is None or run_lock.path != RunLock(forum.state_dir, run_id).path:
             raise ValueError("run_lock must be held for this run")
-        return _prepare_resume(
-            forum=forum, run_id=run_id, profile_names=profile_names,
-            fresh_sessions=fresh_sessions, reset_processes=reset_processes,
-            additional_profiles=additional_profiles,
-        )
+        return await _run_fixed_reactor(forum=forum, prepared=prepared, on_started=on_started,
+                                        runner=runner, poll_interval=poll_interval, lock_fd=run_lock.fd)
+    with RunLock(forum.state_dir, run_id) as lock:
+        assert lock.fd is not None
+        return await _run_fixed_reactor(forum=forum, prepared=prepared, on_started=on_started,
+                                        runner=runner, poll_interval=poll_interval, lock_fd=lock.fd)
+
+
+def prepare_resume(*, forum: Forum, run_id: str, profile_names: Iterable[str] | None = None,
+                   fresh_sessions: bool = False, reset_processes: bool = True,
+                   run_lock: RunLock | None = None) -> PreparedRun:
+    if run_lock is not None:
+        if run_lock.fd is None or run_lock.path != RunLock(forum.state_dir, run_id).path:
+            raise ValueError("run_lock must be held for this run")
+        return _prepare_resume(forum=forum, run_id=run_id, profile_names=profile_names,
+                               fresh_sessions=fresh_sessions, reset_processes=reset_processes)
     with RunLock(forum.state_dir, run_id):
-        return _prepare_resume(
-            forum=forum, run_id=run_id, profile_names=profile_names,
-            fresh_sessions=fresh_sessions, reset_processes=reset_processes,
-            additional_profiles=additional_profiles,
-        )
+        return _prepare_resume(forum=forum, run_id=run_id, profile_names=profile_names,
+                               fresh_sessions=fresh_sessions, reset_processes=reset_processes)

@@ -148,26 +148,6 @@ class AttentionCliTest(unittest.TestCase):
         self.assertEqual([comments[2]["id"]], [item["id"] for item in second["comments"]])
         self.assertIsNone(second["next_cursor"])
 
-    def test_execution_cap_validation_precedes_any_run_preparation(self) -> None:
-        for option in ("--max-concurrent", "--max-codex", "--max-claude"):
-            for value in ("0", "501"):
-                with self.subTest(option=option, value=value):
-                    errors = io.StringIO()
-                    with patch.object(cli, "prepare_run") as prepare, redirect_stderr(errors):
-                        code = cli.main(["run", "goal", "--dry-run", "--workspace", str(self.workspace), option, value])
-                    self.assertEqual(2, code)
-                    self.assertIn("between 1 and 500", errors.getvalue())
-                    prepare.assert_not_called()
-        output = io.StringIO()
-        with patch.object(cli, "_execute_prepared", return_value=0) as execute, redirect_stdout(output):
-            code = cli.main([
-                "run", "goal", "--workspace", str(self.workspace), "--state-dir", str(self.forum.state_dir),
-                "--agent", "openai:fake-model:low", "--no-web", "--max-concurrent", "7",
-                "--max-codex", "3", "--max-claude", "2",
-            ])
-        self.assertEqual(0, code)
-        self.assertEqual((7, 3, 2), tuple(execute.call_args.kwargs[key] for key in ("max_concurrent", "max_codex", "max_claude")))
-
     def test_resume_keeps_one_lock_from_preparation_through_execution(self) -> None:
         for peer in self.prepared.peers:
             self.forum.set_process_state(str(peer.agent["id"]), ProcessState.DORMANT, exit_code=0)

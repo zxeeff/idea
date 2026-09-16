@@ -38,7 +38,7 @@ class AttentionPromptsTest(unittest.TestCase):
         self.assertIn('"current-peer"', prompt)
         self.assertLess(len(prompt.encode("utf-8")), 800)
         self.assertIn('"$IDEA_PYTHON" -m idea forum --help', prompt)
-        for capability in ("discover peers", "follow discussions", "recruit", "volunteer", "publish", "retiring"):
+        for capability in ("share findings", "discover peers", "follow discussions", "before retiring"):
             self.assertIn(capability, prompt)
         self.assertNotIn("--after", prompt)
         self.assertNotIn("--limit", prompt)
@@ -106,14 +106,6 @@ class AttentionPromptsTest(unittest.TestCase):
                 self.assertIn("IDEA `reply` tool", task)
                 self.assertNotIn("reply_trigger", task)
                 self.assertIn('"notification": "subscription"', task)
-
-    def test_invitation_activation_is_optional_and_not_a_direct_mention(self) -> None:
-        invitation = event(7, reason="invitation", content="A public invitation is available: call-example")
-        task = wake_task("Continue the objective", [invitation])
-        self.assertIn('"notification": "invitation"', task)
-        self.assertIn("Participation is optional", task)
-        self.assertIn("idea forum volunteer CALL_ID", task)
-        self.assertNotIn("reply_trigger", task)
 
     def test_human_mentions_precede_peer_mentions_and_subscriptions(self) -> None:
         triggers = [

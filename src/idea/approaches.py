@@ -163,8 +163,7 @@ class ApproachStore:
         ids = [item["id"] for item in items]
         counts = {row["approach_id"]: row for row in connection.execute(
             f"""SELECT m.approach_id, COUNT(*) AS member_count,
-                SUM(a.process_state = 'running') AS running_members,
-                SUM(a.participation_state = 'parked') AS parked_members
+                SUM(a.process_state = 'running') AS running_members
                 FROM approach_members m JOIN agents a ON a.id = m.agent_id
                 WHERE m.approach_id IN ({marks}) AND m.left_at IS NULL
                     AND a.run_id = ? AND a.process_state != 'retired'
@@ -182,7 +181,7 @@ class ApproachStore:
             )}
         for item in items:
             count = counts.get(item["id"])
-            for key in ("member_count", "running_members", "parked_members"):
+            for key in ("member_count", "running_members"):
                 item[key] = int(count[key]) if count is not None else 0
             item["thread_title"] = _preview(titles.get(item["thread_id"], ""), 240)[0]
             if preview:
@@ -296,7 +295,7 @@ class ApproachStore:
             approach = self._approach(connection, approach_id)
             rows = connection.execute(
                 """SELECT m.*, SUBSTR(a.name, 1, 1025) AS name, a.provider,
-                    SUBSTR(a.model, 1, 1025) AS model, a.effort, a.process_state, a.participation_state
+                    SUBSTR(a.model, 1, 1025) AS model, a.effort, a.process_state
                     FROM approach_members m JOIN agents a ON a.id = m.agent_id
                     WHERE m.approach_id = ? AND m.agent_id > ? AND m.left_at IS NULL
                         AND a.run_id = ? AND a.process_state != 'retired'

@@ -232,10 +232,6 @@ class Forum:
                 connection.execute("ALTER TABLE agents ADD COLUMN retired_at TEXT")
             if "retire_reason" not in columns:
                 connection.execute("ALTER TABLE agents ADD COLUMN retire_reason TEXT")
-            if "participation_state" not in columns:
-                connection.execute("ALTER TABLE agents ADD COLUMN participation_state TEXT NOT NULL DEFAULT 'resident'")
-            if "parked_at" not in columns:
-                connection.execute("ALTER TABLE agents ADD COLUMN parked_at TEXT")
             delivery_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notification_deliveries)")}
             if "withdrawn_at" not in delivery_columns:
                 connection.execute("ALTER TABLE notification_deliveries ADD COLUMN withdrawn_at TEXT")
@@ -271,42 +267,6 @@ class Forum:
         connection.execute(
             """INSERT OR IGNORE INTO comment_presentation(comment_id,mode,kind)
                SELECT id,'coordination','system' FROM comments WHERE author='system'"""
-        )
-        tables = {
-            str(row["name"])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-        if not {"participation_calls", "call_participations"}.issubset(tables):
-            return
-        connection.execute(
-            """INSERT OR IGNORE INTO comment_presentation(comment_id,mode,kind)
-               SELECT comment.id,'coordination','participation_call'
-               FROM comments comment
-               JOIN participation_calls call ON call.thread_id=comment.thread_id
-               JOIN agents requester ON requester.id=call.requester_agent_id
-               WHERE comment.author=requester.name
-                 AND comment.body='Open participation request ' || call.id || char(10) || char(10) || call.reason"""
-        )
-        connection.execute(
-            """INSERT OR IGNORE INTO comment_presentation(comment_id,mode,kind)
-               SELECT comment.id,'coordination','participation_status'
-               FROM comments comment
-               JOIN participation_calls call ON call.thread_id=comment.thread_id
-               JOIN agents requester ON requester.id=call.requester_agent_id
-               WHERE comment.author=requester.name
-                 AND comment.body='Withdrew participation request ' || call.id || '.'"""
-        )
-        connection.execute(
-            """INSERT OR IGNORE INTO comment_presentation(comment_id,mode,kind)
-               SELECT comment.id,'coordination','participation_status'
-               FROM comments comment
-               JOIN participation_calls call ON call.thread_id=comment.thread_id
-               JOIN call_participations participation ON participation.call_id=call.id
-               JOIN agents volunteer ON volunteer.id=participation.agent_id
-               WHERE comment.author=volunteer.name
-                 AND comment.body='Volunteered to consider participation request ' || call.id || '.'"""
         )
 
     @staticmethod
@@ -409,7 +369,6 @@ class Forum:
                     agent_id, event_id, run_id, notification_reason, priority
                 ) SELECT id, ?, run_id, 'broadcast', 1 FROM agents
                 WHERE run_id = ? AND process_state != 'retired'
-                  AND participation_state != 'parked'
                   AND name != ? COLLATE NOCASE
                 """,
                 (event_id, run_id, author),
@@ -1047,8 +1006,7 @@ class Forum:
             rows = connection.execute(
                 """
                 SELECT id, run_id, name, provider, model, effort, process_state,
-                       created_at, started_at, exited_at, retired_at, retire_reason,
-                       participation_state, parked_at
+                       created_at, started_at, exited_at, retired_at, retire_reason
                 FROM agents WHERE run_id = ? AND id > ?
                   AND (name LIKE ? ESCAPE '\\' OR model LIKE ? ESCAPE '\\'
                        OR provider LIKE ? ESCAPE '\\')

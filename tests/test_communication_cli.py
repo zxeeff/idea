@@ -26,7 +26,7 @@ class CommunicationCliTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             result = cli.main([
                 "run", "Review evidence", "--workspace", str(self.workspace),
-                "--state-dir", str(self.state_dir), "--dry-run", "--population", "fixed",
+                "--state-dir", str(self.state_dir), "--dry-run",
                 "--agent", "openai:test:low", *args,
             ])
         self.assertEqual(0, result)

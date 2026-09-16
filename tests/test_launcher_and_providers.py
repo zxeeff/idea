@@ -13,7 +13,6 @@ from unittest.mock import patch
 from idea.domain import AgentProfile, Effort, ProcessState, Provider
 from idea.forum import Forum
 from idea.launcher import prepare_resume, prepare_run, run_reactor
-from idea.profiles import default_profiles
 from idea.providers import Invocation, agent_environment, build_invocation, run_agent
 
 
@@ -387,120 +386,6 @@ class LauncherAndProvidersTest(unittest.TestCase):
             self.assertNotIn("--resume", argv)
             self.assertNotIn("legacy-doomed-session", argv)
             self.assertIn("fresh provider session", argv[-1])
-
-    def test_existing_default_run_can_add_new_top_tier_peers(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory).resolve()
-            forum = Forum(workspace / ".idea")
-            current = default_profiles()
-            # Simulate an older run created before every other profile existed.
-            introduced = {profile.name for profile in current[1::2]}
-            previous_defaults = tuple(
-                profile for profile in current if profile.name not in introduced
-            )
-            prepared = prepare_run(
-                forum=forum,
-                goal="goal",
-                workspace=workspace,
-                profiles=previous_defaults,
-            )
-            expanded = prepare_resume(
-                forum=forum,
-                run_id=prepared.run["id"],
-                additional_profiles=current,
-            )
-            names = {peer.profile.name for peer in expanded.peers}
-            self.assertTrue(introduced <= names)
-            self.assertEqual(len(current), len(forum.list_agents(prepared.run["id"])))
-
-    def test_expanding_a_legacy_run_does_not_duplicate_renamed_defaults(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory).resolve()
-            forum = Forum(workspace / ".idea")
-            current = default_profiles()
-            legacy = (
-                AgentProfile("luna-medium", Provider.OPENAI, "gpt-5.6-luna", Effort.MEDIUM),
-                AgentProfile("terra-medium", Provider.OPENAI, "gpt-5.6-terra", Effort.MEDIUM),
-                AgentProfile("terra-high", Provider.OPENAI, "gpt-5.6-terra", Effort.HIGH),
-                AgentProfile("sol-high", Provider.OPENAI, "gpt-5.6-sol", Effort.HIGH),
-                AgentProfile("sol-xhigh", Provider.OPENAI, "gpt-5.6-sol", Effort.XHIGH),
-                AgentProfile("sol-max", Provider.OPENAI, "gpt-5.6-sol", Effort.MAX),
-                AgentProfile(
-                    "daybreak-ultra",
-                    Provider.OPENAI,
-                    "gpt-daybreak-blue-latest",
-                    Effort.ULTRA,
-                ),
-                AgentProfile(
-                    "daybreak-max",
-                    Provider.OPENAI,
-                    "gpt-daybreak-blue-latest",
-                    Effort.MAX,
-                ),
-                AgentProfile("sonnet-medium", Provider.ANTHROPIC, "sonnet", Effort.MEDIUM),
-                AgentProfile("sonnet-high", Provider.ANTHROPIC, "sonnet", Effort.HIGH),
-                AgentProfile("opus-high", Provider.ANTHROPIC, "opus", Effort.HIGH),
-                AgentProfile("opus-high-2", Provider.ANTHROPIC, "opus", Effort.HIGH),
-                AgentProfile("opus-xhigh", Provider.ANTHROPIC, "opus", Effort.XHIGH),
-                AgentProfile("opus-xhigh-2", Provider.ANTHROPIC, "opus", Effort.XHIGH),
-                AgentProfile("opus-max", Provider.ANTHROPIC, "opus", Effort.MAX),
-                AgentProfile("opus-max-2", Provider.ANTHROPIC, "opus", Effort.MAX),
-            )
-            prepared = prepare_run(
-                forum=forum,
-                goal="goal",
-                workspace=workspace,
-                profiles=legacy,
-            )
-
-            expanded = prepare_resume(
-                forum=forum,
-                run_id=prepared.run["id"],
-                profile_names=("sol-1",),
-                additional_profiles=current,
-            )
-
-            self.assertEqual(("sol-high",), tuple(peer.profile.name for peer in expanded.peers))
-            legacy_signatures = {
-                (profile.provider, profile.model, profile.effort) for profile in legacy
-            }
-            introduced = sum(
-                (profile.provider, profile.model, profile.effort) not in legacy_signatures
-                for profile in current
-            )
-            self.assertEqual(
-                len(legacy) + introduced,
-                len(forum.list_agents(prepared.run["id"])),
-            )
-
-    def test_expansion_does_not_alias_an_unrelated_name_with_the_same_settings(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory).resolve()
-            forum = Forum(workspace / ".idea")
-            default = default_profiles()[0]
-            custom = AgentProfile(
-                "my-specialist",
-                default.provider,
-                default.model,
-                default.effort,
-            )
-            prepared = prepare_run(
-                forum=forum,
-                goal="goal",
-                workspace=workspace,
-                profiles=(custom,),
-            )
-
-            prepare_resume(
-                forum=forum,
-                run_id=prepared.run["id"],
-                additional_profiles=(default,),
-            )
-
-            self.assertEqual(
-                {"my-specialist", default.name},
-                {str(record["name"]) for record in forum.list_agents(prepared.run["id"])},
-            )
 
     def test_reactor_wakes_a_fast_dormant_peer_after_slow_peer_posts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

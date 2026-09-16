@@ -68,10 +68,7 @@ class ApproachRuntimeTest(unittest.TestCase):
         )
 
     def running(self, agent_id):
-        with self.forum._connection() as connection:
-            return connection.execute(
-                "SELECT 1 FROM execution_requests WHERE agent_id = ? AND state = 'running'", (agent_id,)
-            ).fetchone() is not None
+        return self.forum.get_agent(agent_id)["process_state"] == ProcessState.RUNNING.value
 
     def pending_ids(self, agent_id):
         return [int(item["id"]) for item in self.forum.pending_notifications(agent_id)]
@@ -158,7 +155,7 @@ class ApproachRuntimeTest(unittest.TestCase):
                 raise
 
         reactor = asyncio.create_task(run_reactor(
-            forum=self.forum, prepared=self.prepared, runner=runner, max_concurrent=3, poll_interval=0.003,
+            forum=self.forum, prepared=self.prepared, runner=runner, poll_interval=0.003,
         ))
         try:
             if fail_first_delivery:

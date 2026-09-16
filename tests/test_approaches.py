@@ -145,8 +145,6 @@ class ApproachesTest(unittest.TestCase):
         first = self.approach()
         second = self.approach(thread=self.thread_named("Alternative"))
         self.forum.set_process_state(self.agent["id"], ProcessState.BLOCKED, session_id="keep-session")
-        with self.forum._connection() as connection:
-            connection.execute("UPDATE agents SET participation_state = 'parked', parked_at = ? WHERE id = ?", ("earlier", self.agent["id"]))
         before_agent = self.forum.get_agent(self.agent["id"])
         before = self.counts()
         first_member = self.store.join(first["id"], self.agent["id"], focus="Check consistency")
@@ -192,19 +190,17 @@ class ApproachesTest(unittest.TestCase):
 
     def test_retired_agents_cannot_join_and_are_excluded_from_membership_counts(self):
         approach = self.approach()
-        peers = [self.agent, self.peer("running"), self.peer("parked"), self.peer("left"), self.peer("retired")]
+        peers = [self.agent, self.peer("running"), self.peer("idle"), self.peer("left"), self.peer("retired")]
         for peer in peers:
             self.store.join(approach["id"], peer["id"])
         self.forum.set_process_state(peers[1]["id"], ProcessState.RUNNING)
         self.forum.set_process_state(peers[2]["id"], ProcessState.DORMANT)
-        with self.forum._connection() as connection:
-            connection.execute("UPDATE agents SET participation_state = 'parked' WHERE id = ?", (peers[2]["id"],))
         self.store.leave(approach["id"], peers[3]["id"])
         self.forum.retire_agent(peers[4]["id"], "Finished participation")
         with self.assertRaises(ValueError):
             self.store.join(approach["id"], peers[4]["id"])
         observed = self.store.get(approach["id"])
-        self.assertEqual((3, 1, 1), tuple(observed[key] for key in ("member_count", "running_members", "parked_members")))
+        self.assertEqual((3, 1), tuple(observed[key] for key in ("member_count", "running_members")))
         self.assertEqual(3, len(self.store.members(approach["id"])["items"]))
         self.assertEqual([], self.store.list(agent_id=peers[4]["id"])["items"])
         self.assertFalse(self.store.leave(approach["id"], peers[4]["id"])["joined"])

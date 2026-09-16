@@ -99,7 +99,7 @@ class BridgeTest(unittest.TestCase):
                 identifier = self.request(payload={field: self.agents[1]["id"]})
                 self.assertEqual(1, self.server.poll())
                 self.assertFalse(self.response(identifier)["ok"])
-        for command in ("integrate", "run", "unknown", "recruit"):
+        for command in ("integrate", "run", "unknown", "calls"):
             identifier = self.request(command=command)
             self.server.poll()
             self.assertFalse(self.response(identifier)["ok"])
@@ -109,9 +109,9 @@ class BridgeTest(unittest.TestCase):
 
     def test_extra_commands_require_explicit_allowlist(self) -> None:
         self.server.close()
-        self.server = BridgeServer(self.forum, self.run["id"], self.handler, allowed_commands=DEFAULT_COMMANDS | {"recruit"})
+        self.server = BridgeServer(self.forum, self.run["id"], self.handler, allowed_commands=DEFAULT_COMMANDS | {"custom"})
         self.server.register(self.agents[0]["id"], self.workspaces[0])
-        identifier = self.request(command="recruit", payload={"reason": "Independent approach"})
+        identifier = self.request(command="custom", payload={"reason": "Independent approach"})
         self.server.poll()
         self.assertTrue(self.response(identifier)["ok"])
 

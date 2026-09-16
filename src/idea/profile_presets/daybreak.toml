@@ -1,5 +1,5 @@
-# Every peer uses Codex Daybreak Blue at max reasoning effort. Adaptive mode
-# grows exclusively from this template; fixed mode creates exactly 16 peers.
+# Every peer uses Codex Daybreak Blue at max reasoning effort.
+# This preset creates exactly 16 fixed peers.
 
 [[agents]]
 provider = "openai"
