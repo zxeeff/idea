@@ -379,8 +379,7 @@ class Forum:
                 INSERT INTO notification_deliveries(
                     agent_id, event_id, run_id, notification_reason, priority
                 ) SELECT id, ?, run_id, 'mention', 0 FROM agents
-                WHERE run_id = ? AND process_state != 'retired'
-                  AND name != ? COLLATE NOCASE
+                WHERE run_id = ? AND name != ? COLLATE NOCASE
                   AND name IN (SELECT value FROM json_each(?))
                 """,
                 (event_id, run_id, author, audience_json),
@@ -533,6 +532,33 @@ class Forum:
                 WHERE id = ? AND process_state != 'retired'
                 """,  # noqa: S608
                 (ProcessState.CREATED.value, agent_id),
+            )
+        return bool(changed.rowcount)
+
+    def revive_retired_agent(self, agent_id: str) -> bool:
+        """Return a retired peer to its original identity for an exact pending mention.
+
+        A broadcast and passive subscription updates deliberately cannot revive a peer.
+        The pending-delivery predicate makes this safe to call from competing launcher
+        processes: only one can claim the transition out of ``retired``.
+        """
+
+        with self._connection() as connection:
+            changed = connection.execute(
+                """
+                UPDATE agents
+                SET process_state = ?, pid = NULL, exit_code = NULL,
+                    started_at = NULL, exited_at = NULL,
+                    retired_at = NULL, retire_reason = NULL
+                WHERE id = ? AND process_state = ?
+                  AND EXISTS (
+                    SELECT 1 FROM notification_deliveries d
+                    WHERE d.agent_id = agents.id
+                      AND d.notification_reason = 'mention'
+                      AND d.acknowledged_at IS NULL AND d.withdrawn_at IS NULL
+                  )
+                """,
+                (ProcessState.CREATED.value, agent_id, ProcessState.RETIRED.value),
             )
         return bool(changed.rowcount)
 

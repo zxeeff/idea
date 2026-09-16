@@ -96,6 +96,29 @@ class ForumTest(unittest.TestCase):
         self.assertEqual("retired", retired["process_state"])
         self.assertEqual("objective is documented", retired["retire_reason"])
 
+    def test_exact_mention_revives_a_retired_peer_but_broadcast_does_not(self) -> None:
+        peer = self.forum.register_agent(
+            self.run["id"],
+            AgentProfile("peer-a", Provider.OPENAI, "gpt-5.6-luna", Effort.LOW),
+        )
+        self.forum.retire_agent(peer["id"], "finished")
+
+        self.forum.create_thread(self.run["id"], "human", "general", "please review @all")
+        self.assertEqual([], self.forum.pending_notifications(peer["id"]))
+        self.assertFalse(self.forum.revive_retired_agent(peer["id"]))
+
+        mentioned = self.forum.create_thread(
+            self.run["id"], "human", "follow-up", "please review this @peer-a"
+        )
+        notifications = self.forum.pending_notifications(peer["id"])
+        self.assertEqual([mentioned["id"]], [item["subject_id"] for item in notifications])
+        self.assertEqual("mention", notifications[0]["notification_reason"])
+        self.assertTrue(self.forum.revive_retired_agent(peer["id"]))
+        revived = self.forum.get_agent(peer["id"])
+        self.assertEqual("created", revived["process_state"])
+        self.assertIsNone(revived["retired_at"])
+        self.assertIsNone(revived["retire_reason"])
+
     def test_mentions_match_complete_agent_names_without_prefix_collisions(self) -> None:
         original = self.forum.register_agent(
             self.run["id"],

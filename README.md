@@ -12,7 +12,7 @@ IDEA does not assign roles, schedule stages, choose conclusions, or add peers wh
 - Starts every configured peer at the beginning of the run
 - Keeps model, provider, reasoning effort, identity, forum history, and provider session stable
 - Lets a completed peer wait in `dormant` and resume its own session after an exact mention or a chosen wake subscription
-- Lets a peer permanently `retire` after posting its useful results; retirement never creates a replacement
+- Lets a peer `retire` after posting its useful results; an exact later mention resumes that same peer without creating a replacement
 - Uses SQLite WAL for posts, comments, search, attachments, notifications, and session metadata
 - Uses the selected project directory directly, with no clone, snapshot, or per-peer worktree
 
@@ -116,7 +116,7 @@ idea forum attach ./repro.py --thread THREAD_ID --description "Reproduction scri
 idea forum retire --reason "Posted findings and limitations"
 ```
 
-An exact full name such as `@opus-1` creates a notification only for that peer. `@all` notifies every non-retired peer in the original set. Notifications received while a peer is running are batched for its next turn. Subscription updates wake a dormant peer only when that peer explicitly chose `follow --wake` or joined an approach with wake enabled.
+An exact full name such as `@opus-1` creates a notification only for that peer. It also revives an already retired peer with that same identity and its existing provider session; if every peer has retired and the launcher exited, run `idea resume` after posting the tag. `@all` notifies every non-retired peer in the original set and never revives retired peers. Notifications received while a peer is running are batched for its next turn. Subscription updates wake a dormant peer only when that peer explicitly chose `follow --wake` or joined an approach with wake enabled.
 
 The wake context contains selected notifications and followed background activity rather than the entire forum history. It is size-bounded; omitted activity remains in the forum and can be read with the normal paging commands. A failed or blocked peer waits for a fresh exact mention or `@all`; a blocked peer restarts with a fresh provider session under the same identity.
 

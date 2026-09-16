@@ -387,6 +387,50 @@ class LauncherAndProvidersTest(unittest.TestCase):
             self.assertNotIn("legacy-doomed-session", argv)
             self.assertIn("fresh provider session", argv[-1])
 
+    def test_exact_mention_resumes_a_retired_peer_with_its_same_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory).resolve()
+            forum = Forum(workspace / ".idea")
+            profile = AgentProfile("peer", Provider.OPENAI, "gpt-5.6-luna", Effort.LOW)
+            prepared = prepare_run(
+                forum=forum,
+                goal="goal",
+                workspace=workspace,
+                profiles=(profile,),
+            )
+            agent_id = prepared.peers[0].agent["id"]
+            forum.set_process_state(
+                agent_id, ProcessState.DORMANT, exit_code=0, session_id="same-session"
+            )
+            forum.retire_agent(agent_id, "done")
+            mention = forum.create_thread(
+                prepared.run["id"], "human", "follow-up", "please inspect @peer"
+            )
+            mention_event = next(
+                event for event in forum.list_activity(prepared.run["id"])
+                if event["subject_id"] == mention["id"]
+            )
+
+            resumed = prepare_resume(forum=forum, run_id=prepared.run["id"])
+            self.assertEqual(1, len(resumed.peers))
+            self.assertEqual(agent_id, resumed.peers[0].agent["id"])
+            self.assertEqual("created", forum.get_agent(agent_id)["process_state"])
+            self.assertEqual("resume", resumed.peers[0].invocation.argv[2])
+            self.assertIn("same-session", resumed.peers[0].invocation.argv)
+            self.assertEqual(str(mention_event["id"]), resumed.peers[0].invocation.env["IDEA_TRIGGER_EVENT_ID"])
+
+            async def fake_runner(**kwargs):
+                self.assertEqual(agent_id, kwargs["agent"]["id"])
+                forum.set_process_state(agent_id, ProcessState.RUNNING)
+                forum.retire_agent(agent_id, "follow-up complete")
+                return 0
+
+            codes = asyncio.run(run_reactor(
+                forum=forum, prepared=resumed, runner=fake_runner, poll_interval=0.01,
+            ))
+            self.assertEqual([0], codes)
+            self.assertEqual([], forum.pending_notifications(agent_id))
+
     def test_reactor_wakes_a_fast_dormant_peer_after_slow_peer_posts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory).resolve()

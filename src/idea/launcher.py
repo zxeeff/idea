@@ -19,6 +19,7 @@ class PreparedPeer:
     profile: AgentProfile
     agent: dict[str, object]
     invocation: Invocation
+    delivery_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,9 +77,36 @@ def _prepare_resume(*, forum: Forum, run_id: str, profile_names: Iterable[str] |
                                       str(record["model"]), Effort(str(record["effort"]))) for record in records)
     peers = []
     for record, profile in zip(records, all_profiles, strict=True):
-        if wanted and profile.name not in wanted or record["process_state"] == ProcessState.RETIRED.value:
+        if wanted and profile.name not in wanted:
             continue
         if record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"]):
+            continue
+        delivery_ids: tuple[int, ...] = ()
+        if record["process_state"] == ProcessState.RETIRED.value:
+            communication = CommunicationStore(forum, run_id)
+            notices = communication.pending_batch(str(record["id"]))
+            if not any(item.get("notification_reason") == "mention" for item in notices):
+                continue
+            page = forum.activity_page(str(record["id"]), scope="following", limit=30)
+            notice_ids = set(_delivery_ids(notices))
+            triggers, background, overflow = select_wake_context(
+                notices, [event for event in page["items"] if int(event["id"]) not in notice_ids])
+            if not triggers:
+                continue
+            if reset_processes and not forum.revive_retired_agent(str(record["id"])):
+                continue
+            if reset_processes:
+                record = forum.get_agent(str(record["id"]))
+            mentions = [item for item in triggers if item.get("notification_reason") in {"mention", "broadcast"}]
+            primary = max(mentions, key=lambda item: int(item["id"])) if mentions else None
+            peers.append(PreparedPeer(profile, record, build_invocation(
+                profile=profile, system_prompt=shared_prompt(name=profile.name, peer_names=(item.name for item in all_profiles)),
+                task_prompt=wake_task(str(run["goal"]), triggers, background, overflow=overflow),
+                workspace=workspace, state_dir=forum.state_dir, run_id=run_id, agent=record,
+                resume_session_id=str(record["session_id"]) if record.get("session_id") else None,
+                trigger_event_id=int(primary["id"]) if primary else None,
+                trigger_thread_id=str(primary["thread_id"]) if primary and primary.get("thread_id") else None,
+            ), tuple(_delivery_ids(triggers))))
             continue
         was_blocked = record["process_state"] == ProcessState.BLOCKED.value
         if not was_blocked and record["process_state"] == ProcessState.FAILED.value and profile.provider is Provider.ANTHROPIC:
@@ -120,7 +148,7 @@ async def _run_fixed_reactor(*, forum: Forum, prepared: PreparedRun,
         ), name=peer.profile.name), delivery_ids)
 
     for peer in peers.values():
-        start(peer, peer.invocation, [])
+        start(peer, peer.invocation, list(peer.delivery_ids))
     if on_started:
         on_started(prepared)
     try:
@@ -152,13 +180,17 @@ async def _run_fixed_reactor(*, forum: Forum, prepared: PreparedRun,
                 if agent_id in active:
                     continue
                 record = records[agent_id]
-                if record["process_state"] == ProcessState.RETIRED.value:
-                    continue
                 if record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"]):
                     continue
                 notices = communication.pending_batch(agent_id)
                 if not notices:
                     continue
+                if record["process_state"] == ProcessState.RETIRED.value:
+                    if not any(item.get("notification_reason") == "mention" for item in notices):
+                        continue
+                    if not forum.revive_retired_agent(agent_id):
+                        continue
+                    record = forum.get_agent(agent_id)
                 if record["process_state"] in {ProcessState.BLOCKED.value, ProcessState.FAILED.value} and not any(
                     item.get("notification_reason") in {"mention", "broadcast"} for item in notices):
                     continue
