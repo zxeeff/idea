@@ -1956,7 +1956,7 @@ JAVASCRIPT = r"""
       text.append(make("div", "peer-meta", `${agent.model} · ${agent.effort} · ${agent.process_state}`));
       if (agent.participation_state === "parked" && agent.process_state !== "retired") {
         const participation = make("div", "peer-participation", "Parked · 유휴 보존");
-        participation.title = "세션과 작업 사본을 보존한 유휴 상태";
+        participation.title = "세션과 참여 기록을 보존한 유휴 상태";
         text.append(participation);
       }
       if (agent.retire_reason) text.append(make("div", "peer-reason", agent.retire_reason));
@@ -2483,14 +2483,15 @@ JAVASCRIPT = r"""
     const residents = population.resident_agents ?? population.live_agents ?? 0;
     if (population.configured) {
       const participation = make("span", "", `Resident ${residents}/${limit(policy.max_agents)} · Parked ${population.parked_agents || 0} · Running ${population.running_agents || 0}`);
-      participation.title = "Resident는 현재 참여 인원, Parked는 세션·작업 사본을 보존한 유휴 인원, Running은 실제 실행 중인 모델 호출입니다.";
+      participation.title = "Resident는 현재 참여 인원, Parked는 세션과 참여 기록을 보존한 유휴 인원, Running은 실제 실행 중인 모델 호출입니다.";
       counts.append(participation);
       counts.append(boardLink(`모집 ${population.open_calls || 0}개 (준비 ${population.ready_calls || 0}) · 미완료 제안 ${population.pending_offers || 0}건`, "call-list"));
       counts.append(make("span", "", `세션 예약 ${population.total_births || 0}/${limit(policy.max_births)} · 생성 여유 ${Math.floor(population.birth_tokens || 0)}/${limit(policy.birth_burst)}`));
       counts.append(make("span", "", `호출 ${population.invocations_started || 0}/${limit(policy.max_invocations)}`));
     }
-    const mode = workspace.mode === "isolated" ? "독립 작업 사본" : workspace.mode === "shared" ? "공유 작업 폴더" : "작업 사본 준비 전";
-    counts.append(boardLink(`${mode} · 결과물 ${workspace.artifact_count || 0}개`, "artifact-list"));
+    if (workspace.artifact_count) {
+      counts.append(boardLink(`이전 결과물 ${workspace.artifact_count}개`, "artifact-list"));
+    }
     let reason = "";
     if (population.configured) {
       const awaitingBirth = population.ready_calls > 0 || population.initial_remaining > 0;
@@ -2498,7 +2499,7 @@ JAVASCRIPT = r"""
       else if (!population.enabled) reason = "자동 충원이 꺼져 있습니다.";
       else if (population.pending_offers > 0) reason = `기존 동료에게 보낸 참여 제안 ${population.pending_offers}건의 실제 호출 완료를 기다립니다.`;
       else if (population.births_exhausted) reason = "신규 참여 세션 한도에 도달했습니다. 기존 동료는 참여할 수 있습니다.";
-      else if (awaitingBirth && residents >= policy.max_agents) reason = "Resident 한도에서 추가 합류를 기다립니다. Parked 동료의 세션과 작업 사본은 보존됩니다.";
+      else if (awaitingBirth && residents >= policy.max_agents) reason = "Resident 한도에서 추가 합류를 기다립니다. Parked 동료의 세션과 참여 기록은 보존됩니다.";
       else if (awaitingBirth && population.next_birth_in_seconds > 0) reason = `추가 참여 슬롯까지 약 ${Math.ceil(population.next_birth_in_seconds)}초`;
       else if (population.initial_remaining > 0) reason = `초기 참여자 ${population.initial_remaining}명의 합류를 기다립니다.`;
       else if (population.ready_calls > 0) reason = `미충족 모집 ${population.ready_calls}개 · 실행 여유가 생기면 추가 참여를 검토합니다.`;

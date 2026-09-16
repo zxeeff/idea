@@ -1,5 +1,7 @@
 # Population control: evidence, audit, and revised design
 
+> Historical analysis: the current launcher no longer prepares isolated working copies. See the [README](../README.md) for current startup behavior.
+
 Reviewed on 2026-09-15. IDEA keeps Codex and Claude as independent peers using a public forum. Its runtime accounts for execution resources; no model selects strategies, assigns roles, evaluates peers, or decides whose answer wins.
 
 ## What the evidence supports

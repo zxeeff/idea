@@ -7,17 +7,16 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from idea.bridge import BridgeClient
+from idea.commands import dispatch_forum
 from idea.domain import AgentProfile, Effort, ProcessState, Provider
 from idea.execution import ExecutionStore
 from idea.forum import Forum
 from idea.launcher import prepare_resume, prepare_run, run_reactor
 from idea.population import PopulationPolicy, PopulationStore
-from idea.workspaces import WorkspaceStore
 
 
 class PopulationAdmissionRuntimeTest(unittest.TestCase):
-    """Exercise population admission with real storage/mailboxes and fake models."""
+    """Exercise population admission with real storage and fake models."""
 
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
@@ -40,7 +39,7 @@ class PopulationAdmissionRuntimeTest(unittest.TestCase):
         prepared = prepare_run(
             forum=self.forum, goal="Reuse existing participants before adding another",
             workspace=self.workspace, profiles=self.profiles, population_policy=policy,
-            adaptive=True, workspace_mode="isolated",
+            adaptive=True,
         )
         run_id = str(prepared.run["id"])
         population = PopulationStore(self.forum, run_id)
@@ -85,8 +84,10 @@ class PopulationAdmissionRuntimeTest(unittest.TestCase):
         return requester, existing, call
 
     async def volunteer(self, invocation, call_id: str):
-        client = BridgeClient(invocation.env["IDEA_BRIDGE_DIR"], timeout=2, poll_interval=.002)
-        return await asyncio.to_thread(client.call, "volunteer", {"call_id": call_id})
+        return await asyncio.to_thread(
+            dispatch_forum, self.forum, invocation.env["IDEA_RUN_ID"],
+            invocation.env["IDEA_AGENT_ID"], "volunteer", {"call_id": call_id},
+        )
 
     async def execute(self, prepared, runner, *, max_concurrent=2, max_codex=None):
         # Surface fake-runner assertion failures immediately: the production
@@ -162,14 +163,12 @@ class PopulationAdmissionRuntimeTest(unittest.TestCase):
             self.assertEqual(session, record["session_id"])
             self.assertEqual("dormant", record["process_state"])
 
-    def test_idle_peer_accepts_an_offer_in_the_same_session_and_working_copy(self) -> None:
+    def test_idle_peer_accepts_an_offer_in_the_same_session_and_folder(self) -> None:
         prepared, population, sessions = self.seeded_run()
         run_id = str(prepared.run["id"])
         _, existing, call = self.recruitment(prepared, population)
         existing_id = str(existing.agent["id"])
-        copies = WorkspaceStore(self.forum, run_id)
-        original_copy = Path(copies.get(existing_id)["path"])
-        (original_copy / "example.txt").write_text("retained private edits\n", encoding="utf-8")
+        (self.workspace / "example.txt").write_text("retained edits\n", encoding="utf-8")
         resumed = prepare_resume(forum=self.forum, run_id=run_id)
         calls = []
 
@@ -178,9 +177,9 @@ class PopulationAdmissionRuntimeTest(unittest.TestCase):
             calls.append(agent_id)
             self.assertEqual(existing_id, agent_id)
             self.assertEqual(existing.profile, kwargs["profile"])
-            self.assertEqual(original_copy, invocation.cwd)
+            self.assertEqual(self.workspace, invocation.cwd)
             self.assertIn(sessions[agent_id], invocation.argv)
-            self.assertEqual("retained private edits\n", (invocation.cwd / "example.txt").read_text())
+            self.assertEqual("retained edits\n", (invocation.cwd / "example.txt").read_text())
             self.assertEqual(["invitation"], [item["notification_reason"] for item in self.forum.pending_notifications(agent_id)])
             self.assertNotIn("IDEA_TRIGGER_EVENT_ID", invocation.env)
             accepted = await self.volunteer(invocation, call["id"])
@@ -193,7 +192,7 @@ class PopulationAdmissionRuntimeTest(unittest.TestCase):
         self.assertEqual(2, population.summary()["total_births"])
         self.assertEqual(3, population.summary()["invocations_started"])
         self.assertEqual("volunteer", population.get_call(call["id"])["fulfillment_kind"])
-        self.assertEqual("unchanged origin\n", (self.workspace / "example.txt").read_text())
+        self.assertEqual("retained edits\n", (self.workspace / "example.txt").read_text())
 
     def test_failed_or_blocked_invitation_does_not_restart_the_same_peer(self) -> None:
         for failed_state in (ProcessState.FAILED, ProcessState.BLOCKED):

@@ -10,7 +10,6 @@ from unittest.mock import patch
 from idea import cli
 from idea.forum import Forum
 from idea.population import PopulationStore
-from idea.workspaces import WorkspaceStore
 
 
 class PopulationCliTest(unittest.TestCase):
@@ -30,7 +29,7 @@ class PopulationCliTest(unittest.TestCase):
         run = forum.list_runs()[0]
         return forum, str(run["id"])
 
-    def test_new_run_uses_adaptive_templates_and_independent_working_copies(self):
+    def test_new_run_uses_adaptive_templates_without_copying_project(self):
         forum, run_id = self.run_preview("--agent", "openai:fake-model:low", "--initial-agents", "2",
                                          "--max-agents", "4", "--max-invocations", "7")
         population = PopulationStore(forum, run_id)
@@ -39,23 +38,21 @@ class PopulationCliTest(unittest.TestCase):
         self.assertEqual(2, len(forum.list_agents(run_id)))
         self.assertEqual(0, population.summary()["invocations_started"])
         self.assertEqual(2, population.summary()["total_births"])
-        copies = WorkspaceStore(forum, run_id)
-        self.assertEqual("isolated", copies.summary()["mode"])
-        self.assertEqual(2, copies.summary()["prepared_count"])
-        for agent in forum.list_agents(run_id):
-            self.assertNotEqual(str(self.workspace), copies.get(agent["id"])["path"])
+        self.assertFalse((self.state_dir / "runs" / run_id / "workspaces").exists())
+        with forum._connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_policies'"
+            ).fetchone())
 
-    def test_fixed_mode_preserves_requested_count_and_shared_compatibility(self):
-        forum, run_id = self.run_preview("--population", "fixed", "--workspace-mode", "shared",
+    def test_fixed_mode_preserves_requested_count_in_original_folder(self):
+        forum, run_id = self.run_preview("--population", "fixed",
                                          "--agent", "openai:fake-model:low:2")
         population = PopulationStore(forum, run_id)
         self.assertFalse(population.enabled)
         self.assertEqual(2, population.policy().initial_agents)
         self.assertEqual(2, len(forum.list_agents(run_id)))
         self.assertEqual(0, population.summary()["total_births"])
-        copies = WorkspaceStore(forum, run_id)
-        for agent in forum.list_agents(run_id):
-            self.assertEqual(str(self.workspace), copies.get(agent["id"])["path"])
+        self.assertFalse((self.state_dir / "runs" / run_id / "workspaces").exists())
 
     def test_daybreak_preset_applies_to_every_adaptive_peer(self):
         forum, run_id = self.run_preview(

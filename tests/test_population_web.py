@@ -63,7 +63,8 @@ class PopulationWebTest(unittest.TestCase):
     def test_legacy_run_has_unconfigured_summary_and_empty_readonly_directories(self) -> None:
         summary = self.json(f"/api/runs/{self.run['id']}/scaling")
         self.assertFalse(summary["population"]["configured"])
-        self.assertIsNone(summary["workspaces"]["mode"])
+        self.assertEqual("shared", summary["workspaces"]["mode"])
+        self.assertFalse((self.forum.state_dir / "runs" / self.run["id"] / "workspaces").exists())
         self.assertEqual(0, summary["workspaces"]["artifact_count"])
         for resource in ("calls", "artifacts"):
             self.assertEqual([], self.json(f"/api/runs/{self.run['id']}/{resource}")["items"])

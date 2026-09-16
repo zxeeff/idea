@@ -1,4 +1,4 @@
-"""Forum operations shared by the local CLI and identity-bound peer mailboxes."""
+"""Forum operations shared by the CLI and native peer tools."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ PEER_COMMANDS = frozenset({
     "recent", "inbox", "discover", "peers", "follow", "unfollow", "following",
     "read", "changes", "search", "post", "reply", "reply-trigger", "attach", "retire",
     "recruit", "calls", "volunteer", "cancel-call", "templates", "population",
-    "publish", "artifacts", "artifact",
+    "artifacts", "artifact",
     "approach", "approaches", "read-approach", "join", "leave", "members",
     "report", "reports", "read-report", "adopt",
 })
@@ -204,16 +204,6 @@ def dispatch_forum(
     from .workspaces import WorkspaceStore
 
     workspaces = WorkspaceStore(forum, run_id)
-    if command == "publish":
-        target = thread(payload["thread_id"]) if payload.get("thread_id") else None
-        value = workspaces.publish(identity(), note=payload.get("note", ""),
-                                   validation=payload.get("validation", ""))
-        if target:
-            forum.add_comment(target, author,
-                              f"Published artifact {value['id']} at base {value['base_revision']}.\n"
-                              f"{payload.get('note', '')}\nReported validation: {payload.get('validation', '')}",
-                              artifact_id=value["id"])
-        return public_artifact(value)
     if command == "artifacts":
         page = workspaces.list_artifacts(limit=limit, after=after)
         return page | {"items": [public_artifact(item) for item in page["items"]]}

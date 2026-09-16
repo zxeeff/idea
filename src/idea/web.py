@@ -190,12 +190,30 @@ def _population_store(forum: Forum, run_id: str) -> Any:
 
 
 def _scaling_summary(forum: Forum, run_id: str) -> dict[str, Any]:
-    from .workspaces import WorkspaceStore
-
     population = _population_store(forum, run_id)
+    # Read historical artifact metadata without initializing working copies.
+    with forum._connection() as connection:
+        tables = {row["name"] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+            "('workspace_policies', 'agent_workspaces', 'workspace_artifacts')"
+        )}
+        legacy = connection.execute(
+            "SELECT mode, base_revision FROM workspace_policies WHERE run_id=?", (run_id,)
+        ).fetchone() if "workspace_policies" in tables else None
+        prepared_count = connection.execute(
+            "SELECT COUNT(*) FROM agent_workspaces WHERE run_id=?", (run_id,)
+        ).fetchone()[0] if "agent_workspaces" in tables else 0
+        artifact_count = connection.execute(
+            "SELECT COUNT(*) FROM workspace_artifacts WHERE run_id=?", (run_id,)
+        ).fetchone()[0] if "workspace_artifacts" in tables else 0
     return {
         "population": population.summary() if population else {"configured": False},
-        "workspaces": WorkspaceStore(forum, run_id).summary(),
+        "workspaces": {
+            "mode": legacy["mode"] if legacy else "shared",
+            "base_revision": legacy["base_revision"] if legacy else None,
+            "prepared_count": prepared_count,
+            "artifact_count": artifact_count,
+        },
     }
 
 
@@ -295,7 +313,7 @@ def _peer_html(agent: dict[str, Any]) -> str:
         else ""
     )
     participation = (
-        '<div class="peer-participation" title="세션과 작업 사본을 보존한 유휴 상태">Parked · 유휴 보존</div>'
+        '<div class="peer-participation" title="세션과 참여 기록을 보존한 유휴 상태">Parked · 유휴 보존</div>'
         if agent.get("participation_state") == "parked" and agent["process_state"] != "retired"
         else ""
     )
@@ -422,7 +440,7 @@ def render_page(forum: Forum, run_id: str) -> str:
     </form>
   </div>
 </header>
-<section id="run-status" class="run-status" aria-label="충원과 작업 사본 상태" aria-live="polite" hidden>
+<section id="run-status" class="run-status" aria-label="충원 상태" aria-live="polite" hidden>
   <div id="run-status-counts" class="run-status-counts"></div>
   <div id="run-status-reason" class="run-status-reason"></div>
 </section>
@@ -457,7 +475,7 @@ def render_page(forum: Forum, run_id: str) -> str:
           title="Resident peer에게 알림을 남깁니다. 실행 한도 안에서 순차 처리됩니다.">@all</button></h2>
       <div id="peer-participation" class="peer-summary">Resident {agent_summary['resident_count']} · Parked {agent_summary['parked_count']}</div>
       <div id="peer-states" class="peer-summary">Running {agent_summary['states'].get('running', 0)} · Dormant {agent_summary['states'].get('dormant', 0)}</div>
-      <div class="peer-summary peer-help">Parked: 세션과 작업 사본을 보존한 유휴 상태</div>
+      <div class="peer-summary peer-help">Parked: 세션과 참여 기록을 보존한 유휴 상태</div>
       <div id="notification-counts" class="peer-summary">알림 대기 {notifications['pending_agents']}명 · {notifications['pending_events']}건</div>
       <form id="peer-search-form" class="search-form peer-search" role="search">
         <input id="peer-search-input" type="search" placeholder="이름·모델 검색"
@@ -734,10 +752,20 @@ class ForumHandler(BaseHTTPRequestHandler):
                     self._json(page | {"items": [_public_call(item) for item in page["items"]]})
                     return
                 if resource == "artifacts":
-                    from .workspaces import WorkspaceStore
-
                     self.forum.get_run(run_id)
                     limit = self._integer(query, "limit", 10, minimum=1, maximum=100)
+                    with self.forum._connection() as connection:
+                        table_exists = connection.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_artifacts'"
+                        ).fetchone()
+                        exists = connection.execute(
+                            "SELECT 1 FROM workspace_artifacts WHERE run_id=? LIMIT 1", (run_id,)
+                        ).fetchone() if table_exists else None
+                    if not exists:
+                        self._json({"items": [], "next_cursor": None})
+                        return
+                    from .workspaces import WorkspaceStore
+
                     page = WorkspaceStore(self.forum, run_id).list_artifacts(
                         limit=limit, after=query.get("after", [None])[-1]
                     )

@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 from idea.approaches import ApproachStore
-from idea.bridge import BridgeClient
+from idea.commands import dispatch_forum
 from idea.communication import CommunicationStore
 from idea.domain import AgentProfile, Effort, ProcessState, Provider
 from idea.forum import Forum
@@ -20,7 +20,7 @@ def notices(invocation):
 
 
 class ApproachRuntimeTest(unittest.TestCase):
-    """Exercise peer mailbox commands, voluntary membership, and the actual reactor."""
+    """Exercise direct forum commands, voluntary membership, and the reactor."""
 
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -30,7 +30,7 @@ class ApproachRuntimeTest(unittest.TestCase):
         self.forum = Forum(self.workspace / ".idea")
         self.prepared = prepare_run(
             forum=self.forum, goal="Exchange measured results while retaining their conditions",
-            workspace=self.workspace, workspace_mode="isolated",
+            workspace=self.workspace,
             profiles=(
                 AgentProfile("peer-a", Provider.OPENAI, "fake-codex", Effort.LOW),
                 AgentProfile("peer-b", Provider.ANTHROPIC, "fake-claude", Effort.LOW),
@@ -63,8 +63,9 @@ class ApproachRuntimeTest(unittest.TestCase):
             raise self.failures[0]
 
     async def command(self, invocation, command, **payload):
-        client = BridgeClient(Path(invocation.env["IDEA_BRIDGE_DIR"]), timeout=3, poll_interval=0.003)
-        return await asyncio.to_thread(client.call, command, payload)
+        return await asyncio.to_thread(
+            dispatch_forum, self.forum, self.run_id, invocation.env["IDEA_AGENT_ID"], command, payload,
+        )
 
     def running(self, agent_id):
         with self.forum._connection() as connection:

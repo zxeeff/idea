@@ -385,14 +385,14 @@ def forum_parser() -> argparse.ArgumentParser:
         description=(
             "Browse public invitations. A filled invitation means "
             "a participant has been connected; it does not certify completion of the work. "
-            "Failed preparation leaves the invitation failed and does not automatically "
+            "Failed admission leaves the invitation failed and does not automatically "
             "create another peer. Optional offers to idle peers finish before new admission."
         ),
         epilog="Choose to join with volunteer CALL_ID. The requester can withdraw an unfilled invitation with cancel-call CALL_ID.",
     )
     calls.add_argument("--state", default="open",
                        choices=("open", "filled", "cancelled", "expired", "failed", "all"),
-                       help="invitation state (default: open); failed preparation is not retried automatically")
+                       help="invitation state (default: open); failed admission is not retried automatically")
     calls.add_argument("--limit", type=int, default=30)
     calls.add_argument("--after", help="continue from the previous next_cursor")
     calls.add_argument("--json", action="store_true")
@@ -416,34 +416,14 @@ def forum_parser() -> argparse.ArgumentParser:
         ("population", "Inspect shared participation and execution limits",
          "Show resident, parked, and actually running peers, pending participation offers, "
          "and shared session and invocation budgets. Parked peers retain their sessions "
-         "and working copies; exact mentions, chosen wake subscriptions, or participation "
+         "and identity; exact mentions, chosen wake subscriptions, or participation "
          "offers can activate them again. New admission requires an unfilled invitation "
          "and execution capacity."),
     ):
         view = sub.add_parser(name, help=help_text, description=description)
         view.add_argument("--json", action="store_true")
-    publish = sub.add_parser(
-        "publish", help="Publish a patch from your working copy",
-        description=(
-            "In isolated mode, publish changes from your private working copy as a patch\n"
-            "against its recorded base. State checks you actually performed in --validation.\n"
-            "Publishing preserves the contribution; applying it to the user's original\n"
-            "workspace is a separate integration action."
-        ),
-        epilog=(
-            'Example: idea forum publish --thread THREAD_ID --validation "Checks performed"\n'
-            "Review contributions with artifacts and artifact ARTIFACT_ID.\n"
-            "Keep the .idea-peer mailbox intact so forum messages can be delivered."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    publish.add_argument("--agent-id")
-    publish.add_argument("--thread", dest="thread_id", help="post a link to the published artifact in this thread")
-    publish.add_argument("--note", default="", help="describe the contribution")
-    publish.add_argument("--validation", default="", help="describe checks you actually performed")
-    publish.add_argument("--json", action="store_true")
     artifacts = sub.add_parser(
-        "artifacts", help="List published patches",
+        "artifacts", help="List patches from older isolated runs",
         description="Find versioned contributions with their base revision, changed files, and reported validation.",
         epilog="Read a contribution with idea forum artifact ARTIFACT_ID --json.",
     )
@@ -451,7 +431,7 @@ def forum_parser() -> argparse.ArgumentParser:
     artifacts.add_argument("--after", help="continue from the previous next_cursor")
     artifacts.add_argument("--json", action="store_true")
     artifact = sub.add_parser(
-        "artifact", help="Inspect an artifact or save its patch to a new file",
+        "artifact", help="Inspect an older artifact or save its patch to a new file",
         description=(
             "Fetch a contribution's metadata and encoded patch. Inspect its base revision, "
             "changes, and reported validation before using it in your own working copy. "
@@ -589,8 +569,6 @@ def _communication_policy(args: argparse.Namespace, previous=None):
 def _add_population_arguments(parser: argparse.ArgumentParser, *, resume: bool = False) -> None:
     parser.add_argument("--population", choices=("adaptive", "fixed"), default=None if resume else "adaptive",
                         help="adaptive public recruitment or the explicitly configured fixed lineup")
-    parser.add_argument("--workspace-mode", choices=("isolated", "shared"), default=None if resume else "isolated",
-                        help="independent working copies (default for new runs) or shared legacy workspace")
     for option, kind, help_text in (
         ("initial-agents", int, "initial population drawn from unique model templates (default: 16)"),
         ("max-agents", int, "maximum resident participants, including reservations; parked peers are preserved separately (default: 100)"),
@@ -719,7 +697,7 @@ def handle_run(argv: Sequence[str]) -> int:
         workspace=workspace,
         profiles=profiles,
         population_policy=_population_policy(args, fixed_count=len(profiles) if args.population == "fixed" else None),
-        adaptive=args.population == "adaptive", workspace_mode=args.workspace_mode,
+        adaptive=args.population == "adaptive",
     )
     from .communication import CommunicationStore
 
@@ -802,7 +780,6 @@ def handle_resume(argv: Sequence[str]) -> int:
             reset_processes=not args.dry_run,
             additional_profiles=default_profiles() if args.expand_defaults else (),
             run_lock=run_lock,
-            workspace_mode=args.workspace_mode,
         )
         communication.configure(
             debounce_seconds=communication_policy.debounce_seconds,
@@ -946,10 +923,7 @@ def handle_status(argv: Sequence[str]) -> int:
     run_id = _run_id(forum, args.run)
     snapshot = forum.snapshot(run_id)
     from .population import PopulationStore
-    from .workspaces import WorkspaceStore
-
     snapshot["population"] = PopulationStore(forum, run_id).summary()
-    snapshot["workspaces"] = WorkspaceStore(forum, run_id).summary()
     if args.json:
         _emit(snapshot, True)
     else:
@@ -957,7 +931,6 @@ def handle_status(argv: Sequence[str]) -> int:
         print(f'workspace: {snapshot["run"]["workspace"]}')
         print(f'threads: {len(snapshot["threads"])}')
         print(f'population: {json.dumps(snapshot["population"], ensure_ascii=False)}')
-        print(f'working copies: {json.dumps(snapshot["workspaces"], ensure_ascii=False)}')
         for agent in snapshot["agents"]:
             print(
                 f'  {agent["name"]}: {agent["model"]} / {agent["effort"]} / '

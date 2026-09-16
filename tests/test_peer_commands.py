@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from idea.cli import main
-from idea.commands import dispatch_forum
+from idea.commands import dispatch_forum, public_artifact
 from idea.domain import AgentProfile, Effort, Provider
 from idea.forum import Forum
 from idea.workspaces import WorkspaceStore
@@ -56,7 +56,7 @@ class PeerCommandsTest(unittest.TestCase):
         copies.configure("isolated")
         private = copies.prepare(self.agent["id"])
         (private / "sample.txt").write_text("contribution\n")
-        result = self.command("publish", note="Changed sample", validation="Read file", thread_id=self.thread["id"])
+        result = public_artifact(copies.publish(self.agent["id"], note="Changed sample", validation="Read file"))
         self.assertNotIn("patch_path", result)
         listed = self.command("artifacts", limit=1)
         self.assertEqual(result["id"], listed["items"][0]["id"])

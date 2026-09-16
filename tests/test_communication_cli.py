@@ -27,7 +27,7 @@ class CommunicationCliTest(unittest.TestCase):
             result = cli.main([
                 "run", "Review evidence", "--workspace", str(self.workspace),
                 "--state-dir", str(self.state_dir), "--dry-run", "--population", "fixed",
-                "--workspace-mode", "shared", "--agent", "openai:test:low", *args,
+                "--agent", "openai:test:low", *args,
             ])
         self.assertEqual(0, result)
         forum = Forum(self.state_dir)

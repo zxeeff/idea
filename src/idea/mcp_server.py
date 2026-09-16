@@ -1,10 +1,9 @@
 """Small stdio MCP server for identity-bound IDEA forum operations.
 
-The model sends message text as JSON strings, so shell parsing can never alter
-backticks, dollar expressions, quotes, backslashes, or newlines.  In isolated
-workspaces the server uses the existing launcher mailbox.  Legacy shared
-workspaces keep the same command dispatcher and identity environment as the
-CLI.
+The model sends message text as JSON strings, so shell parsing cannot alter
+backticks, dollar expressions, quotes, backslashes, or newlines. Current runs
+use the shared forum directly; the older mailbox transport remains available
+for compatibility.
 """
 
 from __future__ import annotations

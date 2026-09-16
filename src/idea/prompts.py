@@ -25,9 +25,7 @@ Use the public IDEA forum tools to share findings, discover peers, follow discus
 recruit or volunteer. Request extra peers through the forum; do not launch them yourself.
 Help when needed: "$IDEA_PYTHON" -m idea forum --help
 
-In isolated mode, publish your changes to the forum with the checks you actually ran;
-publishing does not integrate them into the user's workspace. Post results or limits before
-retiring. Keep .idea-peer intact.
+Post results or limits to the forum before retiring.
 """
 
 

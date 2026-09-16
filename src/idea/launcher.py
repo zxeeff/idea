@@ -5,7 +5,6 @@ import json
 import os
 import time
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable, Iterable
 
@@ -20,7 +19,6 @@ from .providers import (
     Invocation,
     build_invocation,
     log_reports_final_safeguard_refusal,
-    _settle,
     run_agent,
     validate_workspace_boundary,
 )
@@ -82,21 +80,10 @@ def _record_signature(record: dict[str, object]) -> tuple[str, str, str]:
     )
 
 
-def _peer_workspace(forum: Forum, run_id: str, agent_id: str, original: Path) -> tuple[Path, Path | None]:
-    from .workspaces import WorkspaceStore
-
-    store = WorkspaceStore(forum, run_id)
-    if not store.configured():
-        return original, None
-    workspace = store.prepare(agent_id)
-    isolated = store.summary()["mode"] == "isolated"
-    return workspace, workspace / ".idea-peer" if isolated else None
-
-
 def _registered_peer(forum: Forum, run: dict[str, object], record: dict[str, object], *, task: str | None = None) -> PreparedPeer:
     profile = AgentProfile(name=str(record["name"]), provider=Provider(str(record["provider"])),
                            model=str(record["model"]), effort=Effort(str(record["effort"])))
-    workspace, bridge_dir = _peer_workspace(forum, str(run["id"]), str(record["id"]), Path(str(run["workspace"])))
+    workspace = Path(str(run["workspace"]))
     if task is None:
         from .population import PopulationStore
 
@@ -111,7 +98,6 @@ def _registered_peer(forum: Forum, run: dict[str, object], record: dict[str, obj
         profile=profile, system_prompt=shared_prompt(name=profile.name, peer_names=()),
         task_prompt=task, workspace=workspace, state_dir=forum.state_dir, run_id=str(run["id"]),
         agent=record, resume_session_id=str(record["session_id"]) if record.get("session_id") else None,
-        bridge_dir=bridge_dir,
     )
     return PreparedPeer(profile=profile, agent=record, invocation=invocation)
 
@@ -124,7 +110,6 @@ def prepare_run(
     profiles: Iterable[AgentProfile],
     population_policy=None,
     adaptive: bool = False,
-    workspace_mode: str | None = None,
 ) -> PreparedRun:
     workspace = workspace.expanduser().resolve()
     if not workspace.is_dir():
@@ -138,10 +123,6 @@ def prepare_run(
         "Objective",
         goal,
     )
-    if workspace_mode is not None:
-        from .workspaces import WorkspaceStore
-
-        WorkspaceStore(forum, str(run["id"])).configure(mode=workspace_mode)
     if population_policy is not None and adaptive:
         from .population import PopulationStore
 
@@ -159,7 +140,6 @@ def prepare_run(
     peers: list[PreparedPeer] = []
     for profile in profiles:
         agent = forum.register_agent(str(run["id"]), profile)
-        peer_workspace, bridge_dir = _peer_workspace(forum, str(run["id"]), str(agent["id"]), workspace)
         system_prompt = shared_prompt(
             name=profile.name,
             peer_names=(peer.name for peer in profiles),
@@ -168,11 +148,10 @@ def prepare_run(
             profile=profile,
             system_prompt=system_prompt,
             task_prompt=user_task(goal),
-            workspace=peer_workspace,
+            workspace=workspace,
             state_dir=forum.state_dir,
             run_id=str(run["id"]),
             agent=agent,
-            bridge_dir=bridge_dir,
         )
         peers.append(PreparedPeer(profile=profile, agent=agent, invocation=invocation))
     if population_policy is not None:
@@ -213,21 +192,33 @@ def _prepare_resume(
     fresh_sessions: bool = False,
     reset_processes: bool = True,
     additional_profiles: Iterable[AgentProfile] = (),
-    workspace_mode: str | None = None,
 ) -> PreparedRun:
     """Re-enter an interrupted run without creating a planner or a new forum."""
 
     run = forum.get_run(run_id)
     workspace = Path(str(run["workspace"])).expanduser().resolve()
     validate_workspace_boundary(workspace=workspace, state_dir=forum.state_dir)
-    if workspace_mode is not None:
-        from .workspaces import WorkspaceStore
-
-        copies = WorkspaceStore(forum, run_id)
-        previously_isolated = copies.configured() and copies.summary()["mode"] == "isolated"
-        copies.configure(mode=workspace_mode)
-        if workspace_mode == "isolated" and not previously_isolated:
-            fresh_sessions = True
+    # Old isolated sessions remember a different cwd. Migrate each one only
+    # once, when that peer is actually resumed in the original workspace.
+    migration_pending: set[str] = set()
+    with forum._connection() as connection:
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_policies'"
+        ).fetchone():
+            legacy = connection.execute(
+                "SELECT mode FROM workspace_policies WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if legacy and legacy["mode"] == "isolated" and connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_workspaces'"
+            ).fetchone():
+                connection.execute("""CREATE TABLE IF NOT EXISTS shared_workspace_migrations (
+                    agent_id TEXT PRIMARY KEY, run_id TEXT NOT NULL
+                )""")
+                migration_pending = {str(row["agent_id"]) for row in connection.execute(
+                    """SELECT agent_id FROM agent_workspaces WHERE run_id=? AND agent_id NOT IN
+                       (SELECT agent_id FROM shared_workspace_migrations WHERE run_id=?)""",
+                    (run_id, run_id),
+                )}
     records = forum.list_agents(run_id)
     additional_profiles = tuple(additional_profiles)
     known_by_name = {str(record["name"]): record for record in records}
@@ -293,11 +284,7 @@ def _prepare_resume(
         if (record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"])
                 and not _has_owned_attempt(forum, str(record["id"]))):
             continue
-        peer_workspace, bridge_dir = _peer_workspace(forum, run_id, str(record["id"]), workspace)
-        from .workspaces import WorkspaceStore
-
-        copies = WorkspaceStore(forum, run_id)
-        rebase_session = copies.fresh_session_required(str(record["id"])) if bridge_dir else False
+        rebase_session = str(record["id"]) in migration_pending
         was_blocked = record["process_state"] == ProcessState.BLOCKED.value
         if (
             not was_blocked
@@ -316,7 +303,11 @@ def _prepare_resume(
             if not forum.reset_process_observation(str(record["id"]), clear_session=restart_fresh):
                 continue
             if rebase_session:
-                copies.acknowledge_session_reset(str(record["id"]))
+                with forum._connection() as connection:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO shared_workspace_migrations (agent_id, run_id) VALUES (?, ?)",
+                        (str(record["id"]), run_id),
+                    )
         if restart_fresh:
             record["session_id"] = None
         system_prompt = shared_prompt(
@@ -331,12 +322,11 @@ def _prepare_resume(
                 if was_blocked
                 else resume_task(str(run["goal"]))
             ),
-            workspace=peer_workspace,
+            workspace=workspace,
             state_dir=forum.state_dir,
             run_id=run_id,
             agent=record,
             resume_session_id=str(session_id) if session_id else None,
-            bridge_dir=bridge_dir,
         )
         peers.append(PreparedPeer(
             profile=profile, agent=record, invocation=invocation,
@@ -393,35 +383,11 @@ async def _run_reactor_locked(
     log_dir = forum.state_dir / "runs" / run_id / "logs"
     peers = {str(peer.agent["id"]): peer for peer in prepared.peers}
     from .population import PopulationStore
-    from .bridge import BridgeServer
-    from .commands import PEER_COMMANDS, dispatch_forum
-
     population = PopulationStore(forum, run_id)
     managed = population.configured()
     store = ExecutionStore(forum, run_id, population=population if managed else None)
     communication = CommunicationStore(forum, run_id)
     communication.configure()
-    bridge = BridgeServer(
-        forum, run_id,
-        handler=lambda agent_id, command, payload: dispatch_forum(forum, run_id, agent_id, command, payload),
-        allowed_commands=PEER_COMMANDS,
-    )
-    next_response_cleanup = 0.0
-
-    def poll_bridge() -> int:
-        nonlocal next_response_cleanup
-        count = bridge.poll()
-        if time.monotonic() >= next_response_cleanup:
-            bridge.prune_responses(older_than=(datetime.now(UTC) - timedelta(days=1)).isoformat())
-            next_response_cleanup = time.monotonic() + 60
-        return count
-
-    def connect_peer(peer: PreparedPeer) -> None:
-        if peer.invocation.env.get("IDEA_BRIDGE_DIR"):
-            bridge.register(str(peer.agent["id"]), peer.invocation.cwd)
-
-    for peer in peers.values():
-        connect_peer(peer)
     policy = store.configure(
         max_concurrent=max_concurrent, max_codex=max_codex, max_claude=max_claude
     )
@@ -429,7 +395,6 @@ async def _run_reactor_locked(
     active: dict[str, tuple[asyncio.Task[int], int, str]] = {}
     latest_codes: dict[str, int] = {}
     held: dict[str, int] = {}
-    preparation: tuple[dict, asyncio.Task[PreparedPeer]] | None = None
     next_idle_cleanup = 0.0
     for agent_id in peers:
         if peers[agent_id].start_requested or forum.get_agent(agent_id).get("participation_state") != "parked":
@@ -491,20 +456,11 @@ async def _run_reactor_locked(
             resume_session_id=str(session_id) if session_id else None,
             trigger_event_id=int(primary["id"]) if primary else None,
             trigger_thread_id=str(primary["thread_id"]) if primary and primary.get("thread_id") else None,
-            bridge_dir=Path(peer.invocation.env["IDEA_BRIDGE_DIR"]) if peer.invocation.env.get("IDEA_BRIDGE_DIR") else None,
         )
         return replace(invocation, inherited_fds=(lock_fd,))
 
     try:
         while True:
-            # Join the bounded mailbox worker even if cancellation arrives, so
-            # no forum write outlives this run's owner lock.
-            poll = asyncio.create_task(asyncio.to_thread(poll_bridge))
-            try:
-                await asyncio.shield(poll)
-            except asyncio.CancelledError:
-                await _settle(poll)
-                raise
             # Capture completions before admitting another process. RETIRED in
             # the forum is a peer decision, not proof its process has exited.
             for agent_id, (task, request_id, attempt_id) in tuple(active.items()):
@@ -534,23 +490,7 @@ async def _run_reactor_locked(
                 next_idle_cleanup = time.monotonic() + min(30.0, population.policy().idle_timeout)
             population_status = population.summary() if managed else None
             if managed and prepared.allow_join:
-                if preparation is not None and preparation[1].done():
-                    birth, task = preparation
-                    preparation = None
-                    agent_id = str(birth["agent"]["id"])
-                    try:
-                        peer = task.result()
-                        if forum.get_agent(agent_id)["process_state"] == ProcessState.RETIRED.value:
-                            population.finish_birth(birth["birth_id"], succeeded=False, error="Peer retired during preparation")
-                            continue
-                        connect_peer(peer)
-                        population.finish_birth(birth["birth_id"], succeeded=True)
-                        peers[agent_id] = peer
-                        store.enqueue(agent_id, kind="start")
-                    except Exception as error:
-                        latest_codes[agent_id] = 1
-                        population.finish_birth(birth["birth_id"], succeeded=False, error=str(error))
-                if preparation is None and not population_status["exhausted"]:
+                if not population_status["exhausted"]:
                     birth = next((item for item in population.pending_births()
                                   if str(item["agent"]["id"]) not in peers), None)
                     if birth is None and population_status["enabled"]:
@@ -559,11 +499,18 @@ async def _run_reactor_locked(
                             execution_policy=policy, available_agent_ids=peers,
                         )
                     if birth:
-                        # A large working copy must not stop mailboxes for peers
-                        # already running. Only one copy is prepared at a time.
-                        preparation = (birth, asyncio.create_task(asyncio.to_thread(
-                            _registered_peer, forum, prepared.run, birth["agent"],
-                        )))
+                        agent_id = str(birth["agent"]["id"])
+                        try:
+                            peer = _registered_peer(forum, prepared.run, birth["agent"])
+                            if forum.get_agent(agent_id)["process_state"] == ProcessState.RETIRED.value:
+                                population.finish_birth(birth["birth_id"], succeeded=False, error="Peer retired during admission")
+                            else:
+                                population.finish_birth(birth["birth_id"], succeeded=True)
+                                peers[agent_id] = peer
+                                store.enqueue(agent_id, kind="start")
+                        except Exception as error:
+                            latest_codes[agent_id] = 1
+                            population.finish_birth(birth["birth_id"], succeeded=False, error=str(error))
                 population_status = population.summary()
 
             records = enqueue_notifications()
@@ -581,7 +528,7 @@ async def _run_reactor_locked(
                 record["process_state"] in {ProcessState.RETIRED.value, ProcessState.BLOCKED.value}
                 or not record.get("session_id") for key, record in records.items() if key in peers
             ))
-            if not active and preparation is None and (all_retired and not can_still_join
+            if not active and (all_retired and not can_still_join
                                or managed and population_status["exhausted"] or sessions_exhausted):
                 for agent_id in peers:
                     if records[agent_id]["process_state"] == ProcessState.RETIRED.value:
@@ -685,11 +632,6 @@ async def _run_reactor_locked(
             task.cancel()
         if remaining:
             await asyncio.gather(*remaining, return_exceptions=True)
-        if preparation is not None:
-            # Its reserved birth remains recoverable. Join the filesystem writer
-            # before releasing the owner lock, including repeated cancellation.
-            await _settle(asyncio.gather(preparation[1], return_exceptions=True))
-        bridge.close()
         # Requests remain running until the next lock owner recovers them. No
         # notification is acknowledged on cancellation or uncertain completion.
 
@@ -700,7 +642,6 @@ def prepare_resume(
     fresh_sessions: bool = False, reset_processes: bool = True,
     additional_profiles: Iterable[AgentProfile] = (),
     run_lock: RunLock | None = None,
-    workspace_mode: str | None = None,
 ) -> PreparedRun:
     if run_lock is not None:
         if run_lock.fd is None or run_lock.path != RunLock(forum.state_dir, run_id).path:
@@ -709,12 +650,10 @@ def prepare_resume(
             forum=forum, run_id=run_id, profile_names=profile_names,
             fresh_sessions=fresh_sessions, reset_processes=reset_processes,
             additional_profiles=additional_profiles,
-            workspace_mode=workspace_mode,
         )
     with RunLock(forum.state_dir, run_id):
         return _prepare_resume(
             forum=forum, run_id=run_id, profile_names=profile_names,
             fresh_sessions=fresh_sessions, reset_processes=reset_processes,
             additional_profiles=additional_profiles,
-            workspace_mode=workspace_mode,
         )

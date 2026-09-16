@@ -663,7 +663,7 @@ class PopulationStore:
                 return
             state = "ready" if succeeded else "failed"
             connection.execute("UPDATE population_births SET state=?,finished_at=?,error=? WHERE birth_id=?",
-                               (state, time.time(), None if succeeded else str(error or "workspace preparation failed")[:2000], birth_id))
+                               (state, time.time(), None if succeeded else str(error or "peer admission failed")[:2000], birth_id))
             if not succeeded:
                 if birth["call_id"]:
                     connection.execute("UPDATE participation_calls SET state='failed' WHERE id=? AND birth_id=?",

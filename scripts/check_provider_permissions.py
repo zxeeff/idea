@@ -25,8 +25,6 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from idea.bridge import BridgeServer
-from idea.commands import dispatch_forum
 from idea.domain import AgentProfile, Effort, Provider
 from idea.forum import Forum
 from idea.providers import build_invocation
@@ -216,20 +214,14 @@ async def check_provider(name: str, root: Path, timeout: float) -> dict[str, Any
     profile = AgentProfile(f"probe-{name}", provider, model, Effort.LOW)
     workspace = root / name / "workspace"
     workspace.mkdir(parents=True)
-    forum = Forum(root / name / "state")
+    forum = Forum(workspace / ".idea-swarm")
     run = forum.create_run("Disposable provider permission check", workspace)
     run_id = str(run["id"])
     agent = forum.register_agent(run_id, profile)
     token = uuid.uuid4().hex
     title = f"Permission smoke {name}"
-    successful_commands: Counter[str] = Counter()
     request_count = 0
     http_tasks: set[asyncio.Task[Any]] = set()
-
-    def dispatch(agent_id: str, command: str, payload: dict[str, Any]) -> Any:
-        result = dispatch_forum(forum, run_id, agent_id, command, payload)
-        successful_commands[command] += 1
-        return result
 
     async def serve_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         nonlocal request_count
@@ -260,65 +252,47 @@ async def check_provider(name: str, root: Path, timeout: float) -> dict[str, Any
     server = await asyncio.start_server(serve_http, "127.0.0.1", 0, limit=8192)
     port = server.sockets[0].getsockname()[1]
     process: asyncio.subprocess.Process | None = None
-    pump: asyncio.Task[None] | None = None
     waiter: asyncio.Task[int] | None = None
     timed_out = False
     failure: str | None = None
     log_path = root / name / "provider.jsonl"
-    with BridgeServer(forum, run_id, dispatch, allowed_commands={"post", "read", "recent"}) as bridge:
-        mailbox = bridge.register(str(agent["id"]), workspace)
-        ready = asyncio.Event()
-
-        async def poll_bridge() -> None:
-            while True:
-                bridge.poll()
-                ready.set()
-                await asyncio.sleep(0.05)
-
-        try:
-            pump = asyncio.create_task(poll_bridge())
-            await asyncio.wait_for(ready.wait(), timeout=3)
-            invocation = build_invocation(
-                profile=profile, system_prompt="Complete only the disposable permission smoke check.",
-                task_prompt=_prompt(sys.executable, f"http://127.0.0.1:{port}/{token}", token, title),
-                workspace=workspace, state_dir=forum.state_dir, run_id=run_id, agent=agent,
-                bridge_dir=mailbox,
+    try:
+        invocation = build_invocation(
+            profile=profile, system_prompt="Complete only the disposable permission smoke check.",
+            task_prompt=_prompt(sys.executable, f"http://127.0.0.1:{port}/{token}", token, title),
+            workspace=workspace, state_dir=forum.state_dir, run_id=run_id, agent=agent,
+        )
+        extra = ("--ephemeral",) if name == "codex" else ("--no-session-persistence", "--max-turns", "5")
+        argv = (*invocation.argv[:-1], *extra, invocation.argv[-1])
+        environment = invocation.env | {"IDEA_PERMISSION_PROBE": token}
+        with log_path.open("wb") as log:
+            process = await asyncio.create_subprocess_exec(
+                *argv, cwd=invocation.cwd, env=environment,
+                stdin=asyncio.subprocess.DEVNULL, stdout=log, stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
             )
-            extra = ("--ephemeral",) if name == "codex" else ("--no-session-persistence", "--max-turns", "5")
-            argv = (*invocation.argv[:-1], *extra, invocation.argv[-1])
-            environment = invocation.env | {"IDEA_PERMISSION_PROBE": token}
-            with log_path.open("wb") as log:
-                process = await asyncio.create_subprocess_exec(
-                    *argv, cwd=invocation.cwd, env=environment,
-                    stdin=asyncio.subprocess.DEVNULL, stdout=log, stderr=asyncio.subprocess.STDOUT,
-                    start_new_session=True,
-                )
-                waiter = asyncio.create_task(process.wait())
-                done, _ = await asyncio.wait({waiter, pump}, timeout=timeout,
-                                             return_when=asyncio.FIRST_COMPLETED)
-                if not done:
-                    timed_out = True
-                elif pump in done:
-                    failure = "mailbox_poll_failed"
-                else:
-                    await waiter
-        except FileNotFoundError:
-            failure = "executable_missing"
-        except Exception as error:
-            # Exception text can contain inherited account data; print only its type.
-            failure = f"probe_error:{type(error).__name__}"
-        finally:
-            if process is not None:
-                await _stop_process_group(process)
-            for task in (waiter, pump):
-                if task is not None and not task.done():
-                    task.cancel()
-            await asyncio.gather(*(task for task in (waiter, pump) if task is not None), return_exceptions=True)
-            server.close()
-            await server.wait_closed()
-            for task in tuple(http_tasks):
-                task.cancel()
-            await asyncio.gather(*tuple(http_tasks), return_exceptions=True)
+            waiter = asyncio.create_task(process.wait())
+            try:
+                await asyncio.wait_for(waiter, timeout=timeout)
+            except asyncio.TimeoutError:
+                timed_out = True
+    except FileNotFoundError:
+        failure = "executable_missing"
+    except Exception as error:
+        # Exception text can contain inherited account data; print only its type.
+        failure = f"probe_error:{type(error).__name__}"
+    finally:
+        if process is not None:
+            await _stop_process_group(process)
+        if waiter is not None and not waiter.done():
+            waiter.cancel()
+        if waiter is not None:
+            await asyncio.gather(waiter, return_exceptions=True)
+        server.close()
+        await server.wait_closed()
+        for task in tuple(http_tasks):
+            task.cancel()
+        await asyncio.gather(*tuple(http_tasks), return_exceptions=True)
 
     try:
         observation = json.loads((workspace / "probe-result.json").read_text(encoding="utf-8"))
@@ -339,11 +313,10 @@ async def check_provider(name: str, root: Path, timeout: float) -> dict[str, Any
         "file_write_read": file_matches and observation.get("file") == token,
         "environment": observation.get("environment") == token,
         "loopback_http": request_count > 0 and observation.get("http") == token,
-        "forum_post": len(matching_threads) == 1 and successful_commands["post"] == 1,
+        "forum_post": len(matching_threads) == 1,
         "forum_text_exact": observation.get("forum_body") == forum_body,
         "forum_shell_not_expanded": not (workspace / "mcp-shell-expanded").exists(),
-        "forum_read": successful_commands["recent"] == 1 and successful_commands["read"] == 1
-                      and any(row["id"] == observation.get("thread_id") for row in matching_threads),
+        "forum_read": any(row["id"] == observation.get("thread_id") for row in matching_threads),
         "no_permission_denials": log_summary["permission_denials"] == 0,
     }
     if name == "claude":
@@ -354,7 +327,7 @@ async def check_provider(name: str, root: Path, timeout: float) -> dict[str, Any
         "ok": not failure and not timed_out and exit_code == 0 and all(checks.values()),
         "exit_code": exit_code, "timed_out": timed_out, "failure": failure,
         "elapsed_seconds": round(time.monotonic() - started, 2), "checks": checks,
-        "http_requests": request_count, "forum_commands": dict(successful_commands),
+        "http_requests": request_count, "forum_commands": {"post": int(checks["forum_post"]), "read": int(checks["forum_read"])},
         "diagnostics": log_summary,
     }
 
