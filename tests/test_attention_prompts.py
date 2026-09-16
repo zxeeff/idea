@@ -38,8 +38,8 @@ class AttentionPromptsTest(unittest.TestCase):
         self.assertIn('"current-peer"', prompt)
         self.assertLess(len(prompt.encode("utf-8")), 800)
         self.assertIn('"$IDEA_PYTHON" -m idea forum --help', prompt)
-        for capability in ("share findings", "discover peers", "follow discussions", "before retiring"):
-            self.assertIn(capability, prompt)
+        for instruction in ("optional coordination", "Do not browse it", "concrete", "Before retiring"):
+            self.assertIn(instruction, prompt)
         self.assertNotIn("--after", prompt)
         self.assertNotIn("--limit", prompt)
         long_names = ["other-peer-" + "한" * 10_000 for _ in range(500)]
@@ -117,7 +117,8 @@ class AttentionPromptsTest(unittest.TestCase):
         selected, background, overflow = select_wake_context(triggers, [])
         self.assertEqual([4, 2, 3, 1], [item["id"] for item in selected])
         task = wake_task("Continue", selected, background, overflow=overflow)
-        self.assertIn("IDEA `reply_trigger` tool for event 4", task)
+        self.assertIn("explicit mention for event 4 as a work request", task)
+        self.assertIn("reply_trigger` tool only when a concise response", task)
         self.assertIn("IDEA `reply` tool", task)
         self.assertNotIn("event 1", task)
 
@@ -125,7 +126,7 @@ class AttentionPromptsTest(unittest.TestCase):
         mention = event(1)
         del mention["notification_reason"]
         task = wake_task("Continue", [mention])
-        self.assertIn("IDEA `reply_trigger` tool for event 1", task)
+        self.assertIn("explicit mention for event 1 as a work request", task)
         mention["notification_mode"] = "passive"
         self.assertNotIn("reply_trigger", wake_task("Continue", [mention]))
 
@@ -145,7 +146,7 @@ class AttentionPromptsTest(unittest.TestCase):
         self.assertLess(len(selected), len(older) + 1)
         task = wake_task("Continue", selected, background, overflow=overflow)
         self.assertIn("Corrective instruction which unlocked this retry", task)
-        self.assertIn("IDEA `reply_trigger` tool for event 26", task)
+        self.assertIn("explicit mention for event 26 as a work request", task)
         self.assertLessEqual(len(task.encode("utf-8")), 4_096)
 
 
