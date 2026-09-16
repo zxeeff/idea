@@ -6,12 +6,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Awaitable, Callable, Iterable
 
-from .communication import CommunicationStore
 from .domain import AgentProfile, Effort, ProcessState, Provider
 from .execution import RunLock
 from .forum import Forum
-from .prompts import blocked_restart_task, resume_task, select_wake_context, shared_prompt, user_task, wake_task
-from .providers import Invocation, build_invocation, log_reports_final_safeguard_refusal, run_agent, validate_workspace_boundary
+from .prompts import blocked_restart_task, resume_task, shared_prompt, user_task
+from .providers import Invocation, build_invocation, has_final_safeguard_refusal, run_agent, validate_workspace_boundary
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,17 +18,12 @@ class PreparedPeer:
     profile: AgentProfile
     agent: dict[str, object]
     invocation: Invocation
-    delivery_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedRun:
     run: dict[str, object]
     peers: tuple[PreparedPeer, ...]
-
-
-def _delivery_ids(events: Iterable[dict]) -> list[int]:
-    return sorted({int(identifier) for event in events for identifier in event.get("_delivery_event_ids", [event["id"]])})
 
 
 def prepare_run(*, forum: Forum, goal: str, workspace: Path, profiles: Iterable[AgentProfile]) -> PreparedRun:
@@ -44,9 +38,13 @@ def prepare_run(*, forum: Forum, goal: str, workspace: Path, profiles: Iterable[
     for profile in profiles:
         agent = forum.register_agent(str(run["id"]), profile)
         peers.append(PreparedPeer(profile, agent, build_invocation(
-            profile=profile, system_prompt=shared_prompt(name=profile.name, peer_names=(item.name for item in profiles)),
-            task_prompt=user_task(goal), workspace=workspace, state_dir=forum.state_dir,
-            run_id=str(run["id"]), agent=agent,
+            profile=profile,
+            system_prompt=shared_prompt(name=profile.name, peer_names=()),
+            task_prompt=user_task(goal),
+            workspace=workspace,
+            state_dir=forum.state_dir,
+            run_id=str(run["id"]),
+            agent=agent,
         )))
     return PreparedRun(run, tuple(peers))
 
@@ -73,44 +71,19 @@ def _prepare_resume(*, forum: Forum, run_id: str, profile_names: Iterable[str] |
     missing = wanted - {str(record["name"]) for record in records}
     if missing:
         raise ValueError(f"unknown profiles in run: {', '.join(sorted(missing))}")
-    all_profiles = tuple(AgentProfile(str(record["name"]), Provider(str(record["provider"])),
-                                      str(record["model"]), Effort(str(record["effort"]))) for record in records)
+    profiles = tuple(AgentProfile(str(record["name"]), Provider(str(record["provider"])),
+                                  str(record["model"]), Effort(str(record["effort"]))) for record in records)
     peers = []
-    for record, profile in zip(records, all_profiles, strict=True):
-        if wanted and profile.name not in wanted:
-            continue
-        if record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"]):
-            continue
-        delivery_ids: tuple[int, ...] = ()
-        if record["process_state"] == ProcessState.RETIRED.value:
-            communication = CommunicationStore(forum, run_id)
-            notices = communication.pending_batch(str(record["id"]))
-            if not any(item.get("notification_reason") == "mention" for item in notices):
-                continue
-            page = forum.activity_page(str(record["id"]), scope="following", limit=30)
-            notice_ids = set(_delivery_ids(notices))
-            triggers, background, overflow = select_wake_context(
-                notices, [event for event in page["items"] if int(event["id"]) not in notice_ids])
-            if not triggers:
-                continue
-            if reset_processes and not forum.revive_retired_agent(str(record["id"])):
-                continue
-            if reset_processes:
-                record = forum.get_agent(str(record["id"]))
-            mentions = [item for item in triggers if item.get("notification_reason") in {"mention", "broadcast"}]
-            primary = max(mentions, key=lambda item: int(item["id"])) if mentions else None
-            peers.append(PreparedPeer(profile, record, build_invocation(
-                profile=profile, system_prompt=shared_prompt(name=profile.name, peer_names=(item.name for item in all_profiles)),
-                task_prompt=wake_task(str(run["goal"]), triggers, background, overflow=overflow),
-                workspace=workspace, state_dir=forum.state_dir, run_id=run_id, agent=record,
-                resume_session_id=str(record["session_id"]) if record.get("session_id") else None,
-                trigger_event_id=int(primary["id"]) if primary else None,
-                trigger_thread_id=str(primary["thread_id"]) if primary and primary.get("thread_id") else None,
-            ), tuple(_delivery_ids(triggers))))
+    for record, profile in zip(records, profiles, strict=True):
+        if (wanted and profile.name not in wanted
+                or record["process_state"] == ProcessState.RETIRED.value
+                or record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"])):
             continue
         was_blocked = record["process_state"] == ProcessState.BLOCKED.value
         if not was_blocked and record["process_state"] == ProcessState.FAILED.value and profile.provider is Provider.ANTHROPIC:
-            was_blocked = log_reports_final_safeguard_refusal(forum.state_dir / "runs" / run_id / "logs" / f"{profile.name}.jsonl")
+            was_blocked = has_final_safeguard_refusal(
+                forum.state_dir / "runs" / run_id / "logs" / f"{profile.name}.jsonl"
+            )
         restart_fresh = fresh_sessions or was_blocked
         session_id = None if restart_fresh else record.get("session_id")
         if reset_processes and not forum.reset_process_observation(str(record["id"]), clear_session=restart_fresh):
@@ -118,9 +91,13 @@ def _prepare_resume(*, forum: Forum, run_id: str, profile_names: Iterable[str] |
         if restart_fresh:
             record["session_id"] = None
         peers.append(PreparedPeer(profile, record, build_invocation(
-            profile=profile, system_prompt=shared_prompt(name=profile.name, peer_names=(item.name for item in all_profiles)),
+            profile=profile,
+            system_prompt=shared_prompt(name=profile.name, peer_names=()),
             task_prompt=blocked_restart_task(str(run["goal"])) if was_blocked else resume_task(str(run["goal"])),
-            workspace=workspace, state_dir=forum.state_dir, run_id=run_id, agent=record,
+            workspace=workspace,
+            state_dir=forum.state_dir,
+            run_id=run_id,
+            agent=record,
             resume_session_id=str(session_id) if session_id else None,
         )))
     if not peers:
@@ -132,96 +109,48 @@ async def _run_fixed_reactor(*, forum: Forum, prepared: PreparedRun,
                              on_started: Callable[[PreparedRun], None] | None,
                              runner: Callable[..., Awaitable[int]], poll_interval: float,
                              lock_fd: int) -> list[int]:
-    run_id, goal = str(prepared.run["id"]), str(prepared.run["goal"])
-    workspace = Path(str(prepared.run["workspace"])).expanduser().resolve()
+    """Run the fixed initial peer set once; the board never schedules extra turns."""
+
+    run_id = str(prepared.run["id"])
     log_dir = forum.state_dir / "runs" / run_id / "logs"
     peers = {str(peer.agent["id"]): peer for peer in prepared.peers}
-    communication = CommunicationStore(forum, run_id)
-    communication.configure()
-    active: dict[str, tuple[asyncio.Task[int], list[int]]] = {}
+    active: dict[str, asyncio.Task[int]] = {}
     latest_codes: dict[str, int] = {}
 
-    def start(peer: PreparedPeer, invocation: Invocation, delivery_ids: list[int]) -> None:
-        active[str(peer.agent["id"])] = (asyncio.create_task(runner(
-            forum=forum, run_id=run_id, agent=peer.agent, profile=peer.profile,
-            invocation=replace(invocation, inherited_fds=(lock_fd,)), log_dir=log_dir,
-        ), name=peer.profile.name), delivery_ids)
+    def start(peer: PreparedPeer) -> None:
+        active[str(peer.agent["id"])] = asyncio.create_task(runner(
+            forum=forum,
+            run_id=run_id,
+            agent=peer.agent,
+            profile=peer.profile,
+            invocation=replace(peer.invocation, inherited_fds=(lock_fd,)),
+            log_dir=log_dir,
+        ), name=peer.profile.name)
 
     for peer in peers.values():
-        start(peer, peer.invocation, list(peer.delivery_ids))
+        start(peer)
     if on_started:
         on_started(prepared)
     try:
-        while True:
-            if active:
-                await asyncio.wait([item[0] for item in active.values()], timeout=poll_interval,
-                                   return_when=asyncio.FIRST_COMPLETED)
-            else:
-                await asyncio.sleep(poll_interval)
-            for agent_id, (task, delivery_ids) in tuple(active.items()):
+        while active:
+            await asyncio.wait(tuple(active.values()), timeout=poll_interval, return_when=asyncio.FIRST_COMPLETED)
+            for agent_id, task in tuple(active.items()):
                 if not task.done():
                     continue
                 try:
-                    code = task.result()
+                    latest_codes[agent_id] = task.result()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    code = 1
+                    latest_codes[agent_id] = 1
                     forum.set_process_state(agent_id, ProcessState.FAILED, exit_code=1)
-                latest_codes[agent_id] = code
-                if code == 0 and forum.get_agent(agent_id)["process_state"] not in {ProcessState.BLOCKED.value, ProcessState.FAILED.value}:
-                    forum.acknowledge_notifications(agent_id, delivery_ids)
                 del active[agent_id]
-
-            records = {str(item["id"]): item for item in forum.list_agents(run_id)}
-            if peers and all(records[agent_id]["process_state"] == ProcessState.RETIRED.value for agent_id in peers):
-                return [latest_codes.get(agent_id, 0) for agent_id in peers]
-            for agent_id, peer in peers.items():
-                if agent_id in active:
-                    continue
-                record = records[agent_id]
-                if record["process_state"] == ProcessState.RUNNING.value and _pid_is_alive(record["pid"]):
-                    continue
-                notices = communication.pending_batch(agent_id)
-                if not notices:
-                    continue
-                if record["process_state"] == ProcessState.RETIRED.value:
-                    if not any(item.get("notification_reason") == "mention" for item in notices):
-                        continue
-                    if not forum.revive_retired_agent(agent_id):
-                        continue
-                    record = forum.get_agent(agent_id)
-                if record["process_state"] in {ProcessState.BLOCKED.value, ProcessState.FAILED.value} and not any(
-                    item.get("notification_reason") in {"mention", "broadcast"} for item in notices):
-                    continue
-                page = forum.activity_page(agent_id, scope="following", limit=30)
-                notice_ids = set(_delivery_ids(notices))
-                triggers, background, overflow = select_wake_context(
-                    notices, [event for event in page["items"] if int(event["id"]) not in notice_ids])
-                if not triggers:
-                    continue
-                was_blocked = record["process_state"] == ProcessState.BLOCKED.value
-                if not forum.reset_process_observation(agent_id, clear_session=was_blocked):
-                    continue
-                current = forum.get_agent(agent_id)
-                mentions = [item for item in triggers if item.get("notification_reason") in {"mention", "broadcast"}]
-                primary = max(mentions, key=lambda item: int(item["id"])) if mentions else None
-                invocation = build_invocation(
-                    profile=peer.profile, system_prompt=shared_prompt(name=peer.profile.name, peer_names=()),
-                    task_prompt=blocked_restart_task(goal, triggers, background, overflow=overflow) if was_blocked else wake_task(goal, triggers, background, overflow=overflow),
-                    workspace=workspace, state_dir=forum.state_dir, run_id=run_id, agent=current,
-                    resume_session_id=None if was_blocked else (str(current["session_id"]) if current.get("session_id") else None),
-                    trigger_event_id=int(primary["id"]) if primary else None,
-                    trigger_thread_id=str(primary["thread_id"]) if primary and primary.get("thread_id") else None,
-                )
-                peer.agent.update(current)
-                start(peer, invocation, _delivery_ids(triggers))
+        return [latest_codes.get(agent_id, 0) for agent_id in peers]
     finally:
-        remaining = [item[0] for item in active.values()]
-        for task in remaining:
+        for task in active.values():
             task.cancel()
-        if remaining:
-            await asyncio.gather(*remaining, return_exceptions=True)
+        if active:
+            await asyncio.gather(*active.values(), return_exceptions=True)
 
 
 async def run_reactor(*, forum: Forum, prepared: PreparedRun,

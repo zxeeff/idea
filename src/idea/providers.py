@@ -17,10 +17,9 @@ from .forum import Forum
 
 
 _CLAUDE_PEER_TOOLS = "Bash,Edit,Glob,Grep,Read,Write,WebFetch,WebSearch"
-_IDEA_MCP_TOOLS = ("post", "reply", "reply_trigger", "forum")
+_IDEA_MCP_TOOLS = ("post", "reply", "forum")
 _IDEA_MCP_ENVIRONMENT = (
     "PYTHONPATH", "IDEA_STATE_DIR", "IDEA_RUN_ID", "IDEA_AGENT_ID", "IDEA_AGENT_NAME",
-    "IDEA_BRIDGE_DIR", "IDEA_TRIGGER_EVENT_ID", "IDEA_TRIGGER_THREAD_ID",
 )
 
 
@@ -124,14 +123,11 @@ def agent_environment(
     state_dir: Path,
     run_id: str,
     agent: dict[str, Any],
-    trigger_event_id: int | None = None,
-    trigger_thread_id: str | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
     # The browser password belongs to the launcher process. Never expose it to
     # autonomous provider subprocesses.
     env.pop("IDEA_WEB_PASSWORD", None)
-    env.pop("IDEA_BRIDGE_DIR", None)
     existing_pythonpath = env.get("PYTHONPATH")
     module_root = str(_module_root())
     env["PYTHONPATH"] = (
@@ -146,14 +142,6 @@ def agent_environment(
             "IDEA_PYTHON": sys.executable,
         }
     )
-    # Each provider turn is a new OS process. Remove inherited routing hints so
-    # an ordinary start/resume can never accidentally reply to an older trigger.
-    env.pop("IDEA_TRIGGER_EVENT_ID", None)
-    env.pop("IDEA_TRIGGER_THREAD_ID", None)
-    if trigger_event_id is not None:
-        env["IDEA_TRIGGER_EVENT_ID"] = str(trigger_event_id)
-    if trigger_thread_id:
-        env["IDEA_TRIGGER_THREAD_ID"] = str(trigger_thread_id)
     return env
 
 
@@ -167,29 +155,13 @@ def build_invocation(
     run_id: str,
     agent: dict[str, Any],
     resume_session_id: str | None = None,
-    trigger_event_id: int | None = None,
-    trigger_thread_id: str | None = None,
-    bridge_dir: Path | None = None,
 ) -> Invocation:
-    if bridge_dir is None:
-        workspace, state_dir = validate_workspace_boundary(workspace=workspace, state_dir=state_dir)
-    else:
-        workspace = workspace.expanduser().resolve()
-        bridge_dir = bridge_dir.expanduser().resolve()
-        if bridge_dir != workspace / ".idea-peer":
-            raise ValueError("peer mailbox must be inside its isolated workspace")
-        # Forum commands use the identity-bound local mailbox. This routing is
-        # independent of the provider's unrestricted host permissions.
-        state_dir = bridge_dir
+    workspace, state_dir = validate_workspace_boundary(workspace=workspace, state_dir=state_dir)
     env = agent_environment(
         state_dir=state_dir,
         run_id=run_id,
         agent=agent,
-        trigger_event_id=trigger_event_id,
-        trigger_thread_id=trigger_thread_id,
     )
-    if bridge_dir is not None:
-        env["IDEA_BRIDGE_DIR"] = str(bridge_dir)
     if profile.provider is Provider.OPENAI:
         executable = shutil.which("codex") or "codex"
         common = (
@@ -270,7 +242,7 @@ _FINAL_REFUSAL_PATTERN = re.compile(
 )
 
 
-def log_reports_final_safeguard_refusal(path: Path, tail_bytes: int = 2 * 1024 * 1024) -> bool:
+def has_final_safeguard_refusal(path: Path, tail_bytes: int = 2 * 1024 * 1024) -> bool:
     """Recognize refusals written by launchers predating ProcessState.BLOCKED."""
 
     try:
