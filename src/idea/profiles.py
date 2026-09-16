@@ -16,7 +16,7 @@ _PROVIDER_ALIASES = {
     "anthropic": Provider.ANTHROPIC,
     "claude": Provider.ANTHROPIC,
 }
-_MAX_COPIES = 64
+_MAX_COPIES = 500
 
 
 _DEFAULTS_PATH = Path(__file__).resolve().parents[2] / "profiles.toml"
@@ -32,8 +32,8 @@ def default_profiles() -> tuple[AgentProfile, ...]:
 
     if not _DEFAULTS_PATH.is_file():
         raise FileNotFoundError(
-            f"default lineup {_DEFAULTS_PATH} not found; pass --profiles-file "
-            "or set IDEA_PROFILES_FILE (expected when idea is installed "
+            f"default lineup {_DEFAULTS_PATH} not found; pass --config "
+            "or set IDEA_CONFIG (expected when idea is installed "
             "without its source checkout)"
         )
     return load_profiles_file(_DEFAULTS_PATH)
@@ -91,31 +91,6 @@ def _next_free_name(base: str, taken: set[str]) -> str:
         name = f"{base}-{counter}"
     taken.add(name)
     return name
-
-
-def parse_agent_spec(spec: str, taken: set[str] | None = None) -> tuple[AgentProfile, ...]:
-    """Parse an ad-hoc ``provider:model:effort[:count]`` launch spec."""
-
-    parts = [part.strip() for part in spec.split(":")]
-    if len(parts) not in (3, 4) or not all(parts[:3]):
-        raise ValueError(
-            f"agent spec must look like provider:model:effort[:count], got {spec!r}"
-        )
-    provider = _parse_provider(parts[0])
-    model = parts[1]
-    effort = _parse_effort(parts[2])
-    count = _parse_count(parts[3], f"agent spec {spec!r}") if len(parts) == 4 else 1
-    taken = set() if taken is None else taken
-    base = _model_slug(model)
-    return tuple(
-        AgentProfile(
-            name=_next_free_name(base, taken),
-            provider=provider,
-            model=model,
-            effort=effort,
-        )
-        for _ in range(count)
-    )
 
 
 def load_profiles_file(path: str | Path) -> tuple[AgentProfile, ...]:
@@ -178,31 +153,23 @@ def _filter_by_names(
 
 def resolve_profiles(
     names: Iterable[str] | None = None,
-    specs: Iterable[str] | None = None,
     profiles_file: str | Path | None = None,
     preset: str | None = None,
 ) -> tuple[AgentProfile, ...]:
     """Build the active profile set.
 
-    A packaged preset, profiles file, and/or ``--agent`` specs replace the
-    built-in defaults; with none of them, the defaults apply. A preset and a
-    profiles file are mutually exclusive. ``names`` then filters by profile
-    name.
+    A packaged preset or TOML configuration replaces the built-in defaults;
+    with neither, the defaults apply. A preset and configuration are mutually
+    exclusive. ``names`` then filters by profile name.
     """
 
     if preset and profiles_file:
         raise ValueError("a profile preset and profiles file cannot be used together")
-    profiles: list[AgentProfile] = []
-    taken: set[str] = set()
     if preset or profiles_file:
-        loaded = preset_profiles(preset) if preset else load_profiles_file(profiles_file)
-        profiles.extend(loaded)
-        taken.update(profile.name for profile in loaded)
-    for spec in specs or ():
-        profiles.extend(parse_agent_spec(spec, taken))
-    if not profiles:
-        profiles = list(default_profiles())
-    return _filter_by_names(tuple(profiles), names)
+        profiles = preset_profiles(preset) if preset else load_profiles_file(profiles_file)
+    else:
+        profiles = default_profiles()
+    return _filter_by_names(profiles, names)
 
 
 def select_profiles(names: list[str] | None = None) -> tuple[AgentProfile, ...]:

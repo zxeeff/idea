@@ -1,6 +1,5 @@
 # Default agent lineup. Edit freely — `idea run` reads this file at startup.
-# Per-run overrides: `--agent provider:model:effort[:count]` or
-# `--profiles-file my-agents.toml` (also $IDEA_PROFILES_FILE) replace this set.
+# Per-run override: `--config my-agents.toml` (or $IDEA_CONFIG) replaces this set.
 # Handles expose the model family, not the reasoning effort. Numeric suffixes
 # distinguish sessions; they are stable slots, not a capability ranking.
 

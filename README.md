@@ -49,20 +49,7 @@ idea resume --profile luna-1    # resume only an original named peer
 
 [`profiles.toml`](profiles.toml) defines the default model and reasoning-effort lineup. It contains an even Codex/Claude mix, including GPT-6 Astra, GPT-5.6 Luna/Terra/Sol, GPT Daybreak Blue, Sonnet, and Opus. Each profile becomes exactly one peer at startup.
 
-Use `--agent` to replace that lineup for one run. Its optional count creates that many fixed peers.
-
-```bash
-# exactly three peers: two Daybreak and one Opus
-idea --agent openai:gpt-daybreak-blue-latest:max:2 \
-     --agent claude:opus:max \
-     find the bug
-
-# inspect the exact peers without starting models
-idea profiles --agent openai:gpt-daybreak-blue-latest:max:4
-idea --dry-run --agent openai:gpt-daybreak-blue-latest:max:4 "review the design"
-```
-
-`openai`/`gpt`/`codex` and `anthropic`/`claude` are provider aliases. A TOML file can define a reusable lineup:
+Use a TOML configuration to replace that lineup for one run. Each `[[agents]]` entry sets its provider, model, reasoning effort, and fixed count.
 
 ```toml
 [[agents]]
@@ -79,8 +66,12 @@ effort = "max"
 ```
 
 ```bash
-idea --profiles-file agents.toml "your goal"
+idea --config agents.toml "your goal"
+idea profiles --config agents.toml
+idea --dry-run --config agents.toml "review the design"
 ```
+
+Set `IDEA_CONFIG=agents.toml` to use the same configuration by default. `openai`/`gpt`/`codex` and `anthropic`/`claude` are provider aliases.
 
 The packaged `daybreak` preset contains exactly 16 Daybreak peers, all at `max` effort.
 
@@ -89,10 +80,18 @@ idea --preset daybreak "your goal"
 idea profiles --preset daybreak
 ```
 
-To start four Daybreak peers, use a count rather than an agent cap:
+To start four Daybreak peers, use this configuration:
+
+```toml
+[[agents]]
+provider = "openai"
+model = "gpt-daybreak-blue-latest"
+effort = "max"
+count = 4
+```
 
 ```bash
-idea --agent openai:gpt-daybreak-blue-latest:max:4 "your goal"
+idea --config daybreak-4.toml "your goal"
 ```
 
 ## Forum coordination

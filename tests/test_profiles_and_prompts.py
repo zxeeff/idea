@@ -10,7 +10,6 @@ from idea.profiles import (
     available_presets,
     default_profiles,
     load_profiles_file,
-    parse_agent_spec,
     preset_profiles,
     resolve_profiles,
 )
@@ -86,23 +85,7 @@ class ProfilesAndPromptsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             preset_profiles("missing")
 
-    def test_agent_spec_parses_provider_aliases_counts_and_names(self) -> None:
-        profiles = parse_agent_spec("gpt:gpt-daybreak-blue-latest:high:2")
-        self.assertEqual(2, len(profiles))
-        self.assertEqual(Provider.OPENAI, profiles[0].provider)
-        self.assertEqual("gpt-daybreak-blue-latest", profiles[0].model)
-        self.assertEqual(Effort.HIGH, profiles[0].effort)
-        self.assertEqual(
-            ["gpt-daybreak-blue-latest-1", "gpt-daybreak-blue-latest-2"],
-            [profile.name for profile in profiles],
-        )
-        (claude,) = parse_agent_spec("claude:opus:max")
-        self.assertEqual(Provider.ANTHROPIC, claude.provider)
-        for bad in ("openai:model", "nope:model:high", "openai:model:warp", "openai:model:high:0"):
-            with self.assertRaises(ValueError):
-                parse_agent_spec(bad)
-
-    def test_profiles_file_and_specs_replace_defaults(self) -> None:
+    def test_profiles_file_replaces_defaults_and_supports_counts_up_to_500(self) -> None:
         with tempfile.TemporaryDirectory() as workdir:
             path = Path(workdir) / "agents.toml"
             path.write_text(
@@ -124,18 +107,24 @@ effort = "max"
             loaded = load_profiles_file(path)
             self.assertEqual(["blue", "blue-2", "opus-1"], [p.name for p in loaded])
 
-            combined = resolve_profiles(
-                specs=["openai:gpt-5.6-sol:xhigh"], profiles_file=path
-            )
-            self.assertEqual(4, len(combined))
-            self.assertEqual("gpt-5-6-sol-1", combined[-1].name)
-
             filtered = resolve_profiles(names=["blue-2"], profiles_file=path)
             self.assertEqual(("blue-2",), tuple(p.name for p in filtered))
 
+            many = Path(workdir) / "many.toml"
+            many.write_text(
+                """[[agents]]
+provider = "openai"
+model = "gpt-daybreak-blue-latest"
+effort = "max"
+count = 500
+""",
+                encoding="utf-8",
+            )
+            self.assertEqual(500, len(load_profiles_file(many)))
+
         self.assertEqual(default_profiles(), resolve_profiles())
         with self.assertRaises(ValueError):
-            resolve_profiles(names=["missing"], specs=["openai:gpt-5.6-sol:high"])
+            resolve_profiles(names=["missing"])
 
     def test_top_level_prompt_is_minimal_without_exposing_provider_settings(self) -> None:
         profile = AgentProfile("peer-one", Provider.OPENAI, "hidden-self-model", Effort.LOW)

@@ -442,20 +442,11 @@ def run_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--profile", action="append", help="launch only this named profile; repeatable")
-    parser.add_argument(
-        "--agent",
-        action="append",
-        metavar="PROVIDER:MODEL:EFFORT[:COUNT]",
-        help=(
-            "replace the default lineup; repeatable "
-            "(e.g. openai:gpt-daybreak-blue-latest:high:2)"
-        ),
-    )
     profile_source = parser.add_mutually_exclusive_group()
     profile_source.add_argument(
-        "--profiles-file",
-        help="replace the default agents with a TOML file of [[agents]] entries "
-        "(default: $IDEA_PROFILES_FILE)",
+        "--config",
+        help="replace the default lineup with a TOML [[agents]] configuration "
+        "(default: $IDEA_CONFIG)",
     )
     profile_source.add_argument(
         "--preset",
@@ -547,10 +538,9 @@ def handle_run(argv: Sequence[str]) -> int:
     forum = Forum(state_dir)
     profiles = resolve_profiles(
         names=args.profile,
-        specs=args.agent,
         profiles_file=(
-            args.profiles_file
-            or (None if args.preset else os.environ.get("IDEA_PROFILES_FILE"))
+            args.config
+            or (None if args.preset else os.environ.get("IDEA_CONFIG"))
         ),
         preset=args.preset,
     )
@@ -793,16 +783,14 @@ def handle_profiles(argv: Sequence[str]) -> int:
         description="Show the exact model and reasoning profiles used to start fixed peers.",
     )
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--agent", action="append", metavar="PROVIDER:MODEL:EFFORT[:COUNT]")
     profile_source = parser.add_mutually_exclusive_group()
-    profile_source.add_argument("--profiles-file")
+    profile_source.add_argument("--config")
     profile_source.add_argument("--preset", choices=available_presets())
     args = parser.parse_args(argv)
     profiles = resolve_profiles(
-        specs=args.agent,
         profiles_file=(
-            args.profiles_file
-            or (None if args.preset else os.environ.get("IDEA_PROFILES_FILE"))
+            args.config
+            or (None if args.preset else os.environ.get("IDEA_CONFIG"))
         ),
         preset=args.preset,
     )

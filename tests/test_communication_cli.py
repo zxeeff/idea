@@ -21,13 +21,22 @@ class CommunicationCliTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.workspace = Path(self.temp.name).resolve()
         self.state_dir = self.workspace / ".idea"
+        self.config = self.workspace / "agents.toml"
+        self.config.write_text(
+            """[[agents]]
+provider = "openai"
+model = "test"
+effort = "low"
+""",
+            encoding="utf-8",
+        )
 
     def preview(self, *args):
         with redirect_stdout(io.StringIO()):
             result = cli.main([
                 "run", "Review evidence", "--workspace", str(self.workspace),
                 "--state-dir", str(self.state_dir), "--dry-run",
-                "--agent", "openai:test:low", *args,
+                "--config", str(self.config), *args,
             ])
         self.assertEqual(0, result)
         forum = Forum(self.state_dir)
