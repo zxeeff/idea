@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,7 +14,7 @@ from idea.domain import AgentProfile, Effort, ProcessState, Provider
 from idea.forum import Forum
 from idea.launcher import prepare_resume, prepare_run, run_reactor
 from idea.profiles import default_profiles
-from idea.providers import Invocation, agent_environment, run_agent
+from idea.providers import Invocation, agent_environment, build_invocation, run_agent
 
 
 class LauncherAndProvidersTest(unittest.TestCase):
@@ -50,7 +51,7 @@ class LauncherAndProvidersTest(unittest.TestCase):
             self.assertIn("gpt-5.6-luna", codex)
             self.assertIn('model_reasoning_effort="low"', codex)
             self.assertIn("--json", codex)
-            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", codex)
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", codex)
             self.assertNotIn("--sandbox", codex)
             self.assertIn("--strict-config", codex)
             self.assertIn("--ignore-user-config", codex)
@@ -61,27 +62,38 @@ class LauncherAndProvidersTest(unittest.TestCase):
                 if value == "--config"
             )
             self.assertIn('approval_policy="never"', codex_configs)
-            self.assertIn('default_permissions="idea-workspace-only"', codex_configs)
             self.assertIn(
-                (
-                    f'projects."{workspace.resolve()}".'
-                    'trust_level="untrusted"'
-                ),
+                'mcp_servers.idea.args=["-m","idea.mcp_server"]', codex_configs,
+            )
+            self.assertIn("mcp_servers.idea.required=true", codex_configs)
+            self.assertIn(
+                'mcp_servers.idea.enabled_tools=["post","reply","reply_trigger","forum"]',
                 codex_configs,
             )
-            codex_filesystem = next(
-                value
-                for value in codex_configs
-                if value.startswith("permissions.idea-workspace-only.filesystem=")
+            self.assertIn(
+                'mcp_servers.idea.default_tools_approval_mode="approve"', codex_configs,
             )
-            self.assertIn('\":root\"=\"deny\"', codex_filesystem)
-            self.assertIn('\":minimal\"=\"read\"', codex_filesystem)
-            self.assertIn('\":tmpdir\"=\"deny\"', codex_filesystem)
-            self.assertIn("permissions.idea-workspace-only.network.enabled=false", codex_configs)
+            codex_mcp_env = {
+                setting.removeprefix("mcp_servers.idea.env.").split("=", 1)[0]:
+                    json.loads(setting.split("=", 1)[1])
+                for setting in codex_configs
+                if setting.startswith("mcp_servers.idea.env.")
+            }
+            self.assertEqual(str(prepared.run["id"]), codex_mcp_env["IDEA_RUN_ID"])
+            self.assertEqual(str(prepared.peers[0].agent["id"]), codex_mcp_env["IDEA_AGENT_ID"])
+            self.assertNotIn("IDEA_WEB_PASSWORD", codex_mcp_env)
+            self.assertFalse(any(value.startswith(("default_permissions=", "permissions.", "sandbox_mode="))
+                                 for value in codex_configs))
+            project_config = next(value for value in codex_configs if value.startswith("projects="))
+            self.assertEqual(
+                {str(workspace.resolve()): {"trust_level": "untrusted"}},
+                tomllib.loads(project_config)["projects"],
+            )
             codex_system = next(
                 value for value in codex if value.startswith("developer_instructions=")
             )
             self.assertIn("forum --help", codex_system)
+            self.assertIn("IDEA forum tools", codex_system)
             self.assertNotIn("fix the failing test", codex_system)
             self.assertNotIn("gpt-5.6-luna", codex_system)
             self.assertNotIn("effort", codex_system.casefold())
@@ -91,40 +103,35 @@ class LauncherAndProvidersTest(unittest.TestCase):
             claude = prepared.peers[1].invocation.argv
             self.assertIn("opus", claude)
             self.assertEqual("max", claude[claude.index("--effort") + 1])
-            self.assertNotIn("--dangerously-skip-permissions", claude)
-            self.assertIn("--restricted", claude)
+            self.assertIn("--dangerously-skip-permissions", claude)
+            self.assertNotIn("--restricted", claude)
+            self.assertIn("--setting-sources=", claude)
             self.assertIn("--strict-mcp-config", claude)
+            claude_mcp = json.loads(claude[claude.index("--mcp-config") + 1])
+            self.assertEqual(
+                ["-m", "idea.mcp_server"],
+                claude_mcp["mcpServers"]["idea"]["args"],
+            )
+            self.assertEqual("stdio", claude_mcp["mcpServers"]["idea"]["type"])
+            claude_mcp_env = claude_mcp["mcpServers"]["idea"]["env"]
+            self.assertEqual(str(prepared.run["id"]), claude_mcp_env["IDEA_RUN_ID"])
+            self.assertEqual(str(prepared.peers[1].agent["id"]), claude_mcp_env["IDEA_AGENT_ID"])
+            self.assertNotIn("IDEA_WEB_PASSWORD", claude_mcp_env)
             self.assertNotIn("--add-dir", claude)
             self.assertEqual(
-                "Bash,Edit,Glob,Grep,Read,Write",
+                "Bash,Edit,Glob,Grep,Read,Write,WebFetch,WebSearch",
                 claude[claude.index("--tools") + 1],
             )
+            self.assertNotIn("--disallowed-tools", claude)
             self.assertEqual(
-                "mcp__*",
-                claude[claude.index("--disallowed-tools") + 1],
+                "mcp__idea__post,mcp__idea__reply,mcp__idea__reply_trigger,mcp__idea__forum",
+                claude[claude.index("--allowedTools") + 1],
             )
-            self.assertEqual(
-                "acceptEdits",
-                claude[claude.index("--permission-mode") + 1],
-            )
+            self.assertNotIn("--permission-mode", claude)
             claude_settings = json.loads(claude[claude.index("--settings") + 1])
-            self.assertTrue(claude_settings["sandbox"]["enabled"])
-            self.assertTrue(claude_settings["sandbox"]["failIfUnavailable"])
-            self.assertFalse(claude_settings["sandbox"]["allowUnsandboxedCommands"])
-            self.assertTrue(claude_settings["sandbox"]["network"]["strictAllowlist"])
-            self.assertEqual([], claude_settings["sandbox"]["network"]["allowedDomains"])
-            self.assertEqual(
-                ["/"],
-                claude_settings["sandbox"]["filesystem"]["denyRead"],
-            )
-            self.assertIn(
-                str(workspace.resolve()),
-                claude_settings["sandbox"]["filesystem"]["allowRead"],
-            )
-            self.assertEqual(
-                "disable",
-                claude_settings["permissions"]["disableBypassPermissionsMode"],
-            )
+            self.assertEqual({"enabled": False}, claude_settings["sandbox"])
+            self.assertNotIn("permissions", claude_settings)
+            self.assertTrue(claude_settings["disableAllHooks"])
             self.assertEqual(
                 "1",
                 prepared.peers[1].invocation.env[
@@ -132,11 +139,12 @@ class LauncherAndProvidersTest(unittest.TestCase):
                 ],
             )
             self.assertEqual(
-                "1",
+                "0",
                 prepared.peers[1].invocation.env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"],
             )
             claude_system = claude[claude.index("--append-system-prompt") + 1]
             self.assertIn("forum --help", claude_system)
+            self.assertIn("IDEA forum tools", claude_system)
             self.assertNotIn("fix the failing test", claude_system)
             self.assertNotIn("opus", claude_system)
             self.assertNotIn("effort", claude_system.casefold())
@@ -159,17 +167,19 @@ class LauncherAndProvidersTest(unittest.TestCase):
             resumed_codex = resumed.peers[0].invocation.argv
             self.assertEqual("resume", resumed_codex[2])
             self.assertIn("codex-session-id", resumed_codex)
-            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", resumed_codex)
-            self.assertIn('default_permissions="idea-workspace-only"', resumed_codex)
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", resumed_codex)
+            self.assertNotIn('default_permissions="idea-workspace-only"', resumed_codex)
             resumed_claude = resumed.peers[1].invocation.argv
             self.assertEqual(
                 "claude-session-id",
                 resumed_claude[resumed_claude.index("--resume") + 1],
             )
-            self.assertNotIn("--dangerously-skip-permissions", resumed_claude)
-            self.assertIn("--restricted", resumed_claude)
+            self.assertIn("--dangerously-skip-permissions", resumed_claude)
+            self.assertNotIn("--restricted", resumed_claude)
+            self.assertIn("--setting-sources=", resumed_claude)
+            self.assertEqual("0", resumed.peers[1].invocation.env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"])
 
-    def test_forum_state_must_stay_inside_the_sandboxed_workspace(self) -> None:
+    def test_forum_state_must_stay_inside_the_original_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as workspace_directory:
             with tempfile.TemporaryDirectory() as state_directory:
                 workspace = Path(workspace_directory)
@@ -184,6 +194,69 @@ class LauncherAndProvidersTest(unittest.TestCase):
                         workspace=workspace,
                         profiles=profiles,
                     )
+
+    def test_claude_bypass_overrides_inherited_default_mode_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory).resolve()
+            bridge = workspace / ".idea-peer"
+            with patch.dict(os.environ, {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"}):
+                for session in (None, "existing-claude-session"):
+                    with self.subTest(session=session):
+                        invocation = build_invocation(
+                            profile=AgentProfile("peer", Provider.ANTHROPIC, "sonnet", Effort.LOW),
+                            system_prompt="Forum peer", task_prompt="Continue the objective",
+                            workspace=workspace, state_dir=workspace / "state", bridge_dir=bridge,
+                            run_id="run-id", agent={"id": "peer-id", "name": "peer"},
+                            resume_session_id=session,
+                        )
+                        self.assertEqual("0", invocation.env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"])
+                        self.assertEqual("1", os.environ["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"])
+                        self.assertIn("--dangerously-skip-permissions", invocation.argv)
+                        self.assertNotIn("--restricted", invocation.argv)
+                        self.assertEqual(str(bridge), invocation.env["IDEA_BRIDGE_DIR"])
+
+    def test_mcp_receives_only_explicit_forum_routing_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory).resolve()
+            bridge = workspace / ".idea-peer"
+            bridge.mkdir()
+            with patch.dict(os.environ, {
+                "IDEA_WEB_PASSWORD": "must-not-reach-mcp",
+                "UNRELATED_PROVIDER_SECRET": "must-not-reach-mcp",
+            }):
+                for provider in (Provider.OPENAI, Provider.ANTHROPIC):
+                    with self.subTest(provider=provider):
+                        invocation = build_invocation(
+                            profile=AgentProfile("peer", provider, "model", Effort.LOW),
+                            system_prompt="Forum peer", task_prompt="Continue",
+                            workspace=workspace, state_dir=workspace / "state", bridge_dir=bridge,
+                            run_id="run-id", agent={"id": "peer-id", "name": "peer"},
+                            trigger_event_id=42, trigger_thread_id="thread-id",
+                        )
+                        if provider is Provider.OPENAI:
+                            settings = [
+                                invocation.argv[index + 1]
+                                for index, value in enumerate(invocation.argv[:-1])
+                                if value == "--config"
+                            ]
+                            mcp_env = {
+                                setting.removeprefix("mcp_servers.idea.env.").split("=", 1)[0]:
+                                    json.loads(setting.split("=", 1)[1])
+                                for setting in settings
+                                if setting.startswith("mcp_servers.idea.env.")
+                            }
+                        else:
+                            config = json.loads(
+                                invocation.argv[invocation.argv.index("--mcp-config") + 1]
+                            )
+                            mcp_env = config["mcpServers"]["idea"]["env"]
+                        self.assertEqual("run-id", mcp_env["IDEA_RUN_ID"])
+                        self.assertEqual("peer-id", mcp_env["IDEA_AGENT_ID"])
+                        self.assertEqual("42", mcp_env["IDEA_TRIGGER_EVENT_ID"])
+                        self.assertEqual("thread-id", mcp_env["IDEA_TRIGGER_THREAD_ID"])
+                        self.assertEqual(str(bridge), mcp_env["IDEA_BRIDGE_DIR"])
+                        self.assertNotIn("IDEA_WEB_PASSWORD", mcp_env)
+                        self.assertNotIn("UNRELATED_PROVIDER_SECRET", mcp_env)
 
     def test_runner_accepts_an_oversized_jsonl_line_without_dying(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -487,7 +560,7 @@ class LauncherAndProvidersTest(unittest.TestCase):
             self.assertIn('"message": "new useful chain @fast"', wake_prompts[0])
             self.assertIn("BACKGROUND ACTIVITY", wake_prompts[0])
             background = wake_prompts[0].split("BACKGROUND ACTIVITY", 1)[1]
-            self.assertIn(passive_thread["id"], background)
+            self.assertNotIn(passive_thread["id"], background)
             self.assertNotIn(late_thread["id"], background)
             self.assertEqual(
                 late_thread["id"], wake_environments[0]["IDEA_TRIGGER_THREAD_ID"]

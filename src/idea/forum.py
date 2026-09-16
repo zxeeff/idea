@@ -12,9 +12,23 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .domain import AgentProfile, ProcessState
+from . import provenance
 
 
 _MENTION_RE = re.compile(r"(?<![\w-])@([A-Za-z0-9][A-Za-z0-9_-]*)(?![\w-])")
+
+
+def _discussion_comment_sql(alias: str) -> str:
+    """SQL predicate for comments intended for the human discussion view."""
+
+    if alias not in {"c", "search_comments"}:
+        raise ValueError("unsupported comment alias")
+    return (
+        f"{alias}.author != 'system' AND NOT EXISTS ("
+        "SELECT 1 FROM comment_presentation presentation "
+        f"WHERE presentation.comment_id = {alias}.id "
+        "AND presentation.mode = 'coordination')"
+    )
 
 
 def _now() -> str:
@@ -106,6 +120,12 @@ class Forum:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS comment_presentation (
+                    comment_id TEXT PRIMARY KEY REFERENCES comments(id),
+                    mode TEXT NOT NULL CHECK(mode IN ('coordination')),
+                    kind TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS attachments (
                     id TEXT PRIMARY KEY,
                     run_id TEXT NOT NULL REFERENCES runs(id),
@@ -139,8 +159,50 @@ class Forum:
                     ON attachments(run_id, created_at);
                 CREATE INDEX IF NOT EXISTS activity_by_run
                     ON activity(run_id, id);
+                CREATE INDEX IF NOT EXISTS activity_by_thread
+                    ON activity(thread_id, id);
+                CREATE INDEX IF NOT EXISTS agents_by_run_name_nocase
+                    ON agents(run_id, name COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS agents_by_run_id
+                    ON agents(run_id, id);
+                CREATE INDEX IF NOT EXISTS comments_by_thread_page
+                    ON comments(thread_id, created_at, id);
+                CREATE TABLE IF NOT EXISTS forum_migrations (
+                    name TEXT PRIMARY KEY
+                );
+                CREATE TABLE IF NOT EXISTS thread_subscriptions (
+                    agent_id TEXT NOT NULL REFERENCES agents(id),
+                    thread_id TEXT NOT NULL REFERENCES threads(id),
+                    wake INTEGER NOT NULL DEFAULT 0 CHECK (wake IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(agent_id, thread_id)
+                );
+                CREATE INDEX IF NOT EXISTS subscriptions_by_thread
+                    ON thread_subscriptions(thread_id, wake, agent_id);
+                CREATE TABLE IF NOT EXISTS notification_deliveries (
+                    agent_id TEXT NOT NULL REFERENCES agents(id),
+                    event_id INTEGER NOT NULL REFERENCES activity(id),
+                    run_id TEXT NOT NULL REFERENCES runs(id),
+                    notification_reason TEXT NOT NULL,
+                    priority INTEGER NOT NULL,
+                    acknowledged_at TEXT,
+                    withdrawn_at TEXT,
+                    PRIMARY KEY(agent_id, event_id)
+                );
+                CREATE INDEX IF NOT EXISTS pending_notifications_by_agent
+                    ON notification_deliveries(agent_id, priority, event_id)
+                    WHERE acknowledged_at IS NULL;
+                CREATE INDEX IF NOT EXISTS pending_notifications_by_run
+                    ON notification_deliveries(run_id, agent_id, priority, event_id)
+                    WHERE acknowledged_at IS NULL;
                 """
             )
+            provenance.initialize(connection)
+            from .approaches import initialize as initialize_approaches
+            from .reports import initialize as initialize_reports
+
+            initialize_approaches(connection)
+            initialize_reports(connection)
             columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(agents)").fetchall()
@@ -170,6 +232,19 @@ class Forum:
                 connection.execute("ALTER TABLE agents ADD COLUMN retired_at TEXT")
             if "retire_reason" not in columns:
                 connection.execute("ALTER TABLE agents ADD COLUMN retire_reason TEXT")
+            if "participation_state" not in columns:
+                connection.execute("ALTER TABLE agents ADD COLUMN participation_state TEXT NOT NULL DEFAULT 'resident'")
+            if "parked_at" not in columns:
+                connection.execute("ALTER TABLE agents ADD COLUMN parked_at TEXT")
+            delivery_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notification_deliveries)")}
+            if "withdrawn_at" not in delivery_columns:
+                connection.execute("ALTER TABLE notification_deliveries ADD COLUMN withdrawn_at TEXT")
+            connection.execute("""CREATE INDEX IF NOT EXISTS actionable_notifications_by_agent
+                ON notification_deliveries(agent_id, priority, event_id)
+                WHERE acknowledged_at IS NULL AND withdrawn_at IS NULL""")
+            connection.execute("""CREATE INDEX IF NOT EXISTS actionable_notifications_by_run
+                ON notification_deliveries(run_id, agent_id, priority, event_id)
+                WHERE acknowledged_at IS NULL AND withdrawn_at IS NULL""")
             activity_columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(activity)").fetchall()
@@ -186,6 +261,90 @@ class Forum:
                 connection.execute(
                     "UPDATE activity SET notification_mode = 'broadcast'"
                 )
+            self._migrate_comment_presentation(connection)
+            self._migrate_notification_deliveries(connection)
+
+    @staticmethod
+    def _migrate_comment_presentation(connection: sqlite3.Connection) -> None:
+        """Classify protocol comments written before presentation metadata existed."""
+
+        connection.execute(
+            """INSERT OR IGNORE INTO comment_presentation(comment_id,mode,kind)
+               SELECT id,'coordination','system' FROM comments WHERE author='system'"""
+        )
+        tables = {
+            str(row["name"])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if not {"participation_calls", "call_participations"}.issubset(tables):
+            return
+        connection.execute(
+            """INSERT OR IGNORE INTO comment_presentation(comment_id,mode,kind)
+               SELECT comment.id,'coordination','participation_call'
+               FROM comments comment
+               JOIN participation_calls call ON call.thread_id=comment.thread_id
+               JOIN agents requester ON requester.id=call.requester_agent_id
+               WHERE comment.author=requester.name
+                 AND comment.body='Open participation request ' || call.id || char(10) || char(10) || call.reason"""
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO comment_presentation(comment_id,mode,kind)
+               SELECT comment.id,'coordination','participation_status'
+               FROM comments comment
+               JOIN participation_calls call ON call.thread_id=comment.thread_id
+               JOIN agents requester ON requester.id=call.requester_agent_id
+               WHERE comment.author=requester.name
+                 AND comment.body='Withdrew participation request ' || call.id || '.'"""
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO comment_presentation(comment_id,mode,kind)
+               SELECT comment.id,'coordination','participation_status'
+               FROM comments comment
+               JOIN participation_calls call ON call.thread_id=comment.thread_id
+               JOIN call_participations participation ON participation.call_id=call.id
+               JOIN agents volunteer ON volunteer.id=participation.agent_id
+               WHERE comment.author=volunteer.name
+                 AND comment.body='Volunteered to consider participation request ' || call.id || '.'"""
+        )
+
+    @staticmethod
+    def _migrate_notification_deliveries(connection: sqlite3.Connection) -> None:
+        # The marker and backfill commit together. INSERT acquires the writer
+        # lock, so simultaneous client initialization cannot replay the migration.
+        # The ordinary CLI read path must not acquire that writer lock again.
+        if connection.execute(
+            "SELECT 1 FROM forum_migrations WHERE name = 'attention-v1'"
+        ).fetchone() is not None:
+            return
+        inserted = connection.execute(
+            "INSERT OR IGNORE INTO forum_migrations(name) VALUES ('attention-v1')"
+        )
+        if not inserted.rowcount:
+            return
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO notification_deliveries(
+                agent_id, event_id, run_id, notification_reason, priority
+            )
+            SELECT p.id, a.id, a.run_id,
+                   CASE a.notification_mode WHEN 'targeted' THEN 'mention'
+                        ELSE 'broadcast' END,
+                   CASE a.notification_mode WHEN 'targeted' THEN 0 ELSE 1 END
+            FROM agents p JOIN activity a ON a.run_id = p.run_id
+            WHERE p.process_state != 'retired' AND a.id > p.last_wake_scan_id
+              AND a.author != p.name COLLATE NOCASE
+              AND (
+                a.notification_mode = 'broadcast' OR
+                (a.notification_mode = 'targeted' AND EXISTS (
+                    SELECT 1 FROM json_each(
+                        CASE WHEN json_valid(a.audience_json) THEN a.audience_json ELSE '[]' END
+                    ) recipients WHERE recipients.value = p.name
+                ))
+              )
+            """
+        )
 
     @staticmethod
     def _activity_notification(
@@ -194,13 +353,16 @@ class Forum:
         tokens = {token.casefold() for token in _MENTION_RE.findall(text)}
         if "all" in tokens:
             return "broadcast", None
-        names = [
-            str(row["name"])
-            for row in connection.execute(
-                "SELECT name FROM agents WHERE run_id = ?", (run_id,)
-            ).fetchall()
-        ]
-        mentioned = [name for name in names if name.casefold() in tokens]
+        if not tokens:
+            return "passive", None
+        mentioned = [str(row["name"]) for row in connection.execute(
+            """
+            SELECT name FROM agents
+            WHERE run_id = ? AND name COLLATE NOCASE IN (SELECT value FROM json_each(?))
+            ORDER BY created_at, id
+            """,
+            (run_id, json.dumps(sorted(tokens))),
+        ).fetchall()]
         if mentioned:
             return "targeted", json.dumps(mentioned)
         return "passive", None
@@ -215,11 +377,11 @@ class Forum:
         subject_id: str,
         thread_id: str | None,
         text: str,
-    ) -> None:
+    ) -> int:
         notification_mode, audience_json = self._activity_notification(
             connection, run_id, text
         )
-        connection.execute(
+        cursor = connection.execute(
             """
             INSERT INTO activity(
                 run_id, author, kind, subject_id, thread_id, audience_json,
@@ -237,6 +399,51 @@ class Forum:
                 _now(),
             ),
         )
+        event_id = int(cursor.lastrowid)
+        # Delivery is a recipient snapshot. Later joiners never inherit old
+        # broadcasts, and a subscription can be changed without rewriting posts.
+        if notification_mode == "broadcast":
+            connection.execute(
+                """
+                INSERT INTO notification_deliveries(
+                    agent_id, event_id, run_id, notification_reason, priority
+                ) SELECT id, ?, run_id, 'broadcast', 1 FROM agents
+                WHERE run_id = ? AND process_state != 'retired'
+                  AND participation_state != 'parked'
+                  AND name != ? COLLATE NOCASE
+                """,
+                (event_id, run_id, author),
+            )
+        elif notification_mode == "targeted":
+            connection.execute(
+                """
+                INSERT INTO notification_deliveries(
+                    agent_id, event_id, run_id, notification_reason, priority
+                ) SELECT id, ?, run_id, 'mention', 0 FROM agents
+                WHERE run_id = ? AND process_state != 'retired'
+                  AND name != ? COLLATE NOCASE
+                  AND name IN (SELECT value FROM json_each(?))
+                """,
+                (event_id, run_id, author, audience_json),
+            )
+        if thread_id:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO notification_deliveries(
+                    agent_id, event_id, run_id, notification_reason, priority
+                ) SELECT p.id, ?, p.run_id, 'subscription', 2
+                  FROM agents p JOIN (
+                    SELECT s.agent_id FROM thread_subscriptions s WHERE s.thread_id=? AND s.wake=1
+                    UNION
+                    SELECT m.agent_id FROM approach_members m JOIN approaches a ON a.id=m.approach_id
+                    WHERE a.thread_id=? AND m.left_at IS NULL AND m.wake=1
+                  ) chosen ON chosen.agent_id=p.id
+                WHERE p.run_id = ?
+                  AND p.process_state != 'retired' AND p.name != ? COLLATE NOCASE
+                """,
+                (event_id, thread_id, thread_id, run_id, author),
+            )
+        return event_id
 
     def create_run(self, goal: str, workspace: str | Path) -> dict[str, Any]:
         run_id = _id("run")
@@ -349,24 +556,26 @@ class Forum:
         values.append(agent_id)
         with self._connection() as connection:
             connection.execute(
-                f"UPDATE agents SET {', '.join(fields)} WHERE id = ?",  # noqa: S608
-                values,
+                f"UPDATE agents SET {', '.join(fields)} WHERE id = ? "
+                "AND (process_state != 'retired' OR ? = 'retired')",  # noqa: S608
+                values + [state.value],
             )
 
-    def reset_process_observation(self, agent_id: str, *, clear_session: bool = False) -> None:
+    def reset_process_observation(self, agent_id: str, *, clear_session: bool = False) -> bool:
         """Clear launcher bookkeeping before an explicit user-requested restart."""
 
         session_sql = ", session_id = NULL" if clear_session else ""
         with self._connection() as connection:
-            connection.execute(
+            changed = connection.execute(
                 f"""
                 UPDATE agents
                 SET process_state = ?, pid = NULL, exit_code = NULL,
                     started_at = NULL, exited_at = NULL{session_sql}
-                WHERE id = ?
+                WHERE id = ? AND process_state != 'retired'
                 """,  # noqa: S608
                 (ProcessState.CREATED.value, agent_id),
             )
+        return bool(changed.rowcount)
 
     def create_thread(self, run_id: str, author: str, title: str, body: str) -> dict[str, Any]:
         thread_id = _id("thread")
@@ -389,21 +598,91 @@ class Forum:
             )
         return self.get_thread(thread_id)
 
-    def get_thread(self, thread_id: str) -> dict[str, Any]:
+    def get_thread(
+        self,
+        thread_id: str,
+        *,
+        include_comments: bool = True,
+        include_coordination: bool = True,
+    ) -> dict[str, Any]:
         with self._connection() as connection:
+            connection.execute("BEGIN")
             row = connection.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone()
             if row is None:
                 raise KeyError(f"unknown thread: {thread_id}")
             result = dict(row)
+            event = connection.execute(
+                "SELECT id FROM activity WHERE kind = 'thread' AND subject_id = ? ORDER BY id LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+            result["event_id"] = int(event["id"]) if event else None
+            comment_filter = "" if include_coordination else f"AND {_discussion_comment_sql('c')}"
             comments = connection.execute(
-                "SELECT * FROM comments WHERE thread_id = ? ORDER BY created_at", (thread_id,)
-            ).fetchall()
+                f"SELECT c.* FROM comments c WHERE c.thread_id = ? {comment_filter} "
+                "ORDER BY c.created_at, c.id",
+                (thread_id,),
+            ).fetchall() if include_comments else []
+            result["comment_count"] = int(connection.execute(
+                f"SELECT COUNT(*) FROM comments c WHERE c.thread_id = ? {comment_filter}",
+                (thread_id,),
+            ).fetchone()[0])
             attachments = connection.execute(
                 "SELECT * FROM attachments WHERE thread_id = ? ORDER BY created_at", (thread_id,)
             ).fetchall()
-        result["comments"] = [dict(comment) for comment in comments]
+            result["comments"] = self._comment_details(connection, comments)
+            result["approach"] = self._approaches_for_threads(connection, [thread_id], preview=False).get(thread_id)
         result["attachments"] = [dict(item) for item in attachments]
         return result
+
+    def get_comment(
+        self, thread_id: str, comment_id: str, *, include_coordination: bool = True,
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            comment_filter = "" if include_coordination else f"AND {_discussion_comment_sql('c')}"
+            row = connection.execute(
+                f"SELECT c.* FROM comments c WHERE c.thread_id = ? AND c.id = ? {comment_filter}",
+                (thread_id, comment_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown comment in thread: {comment_id}")
+            return self._comment_details(connection, [row])[0]
+
+    def comments_page(
+        self,
+        thread_id: str,
+        *,
+        limit: int = 30,
+        after: str | None = None,
+        include_coordination: bool = True,
+    ) -> dict[str, Any]:
+        self._page_limit(limit)
+        after = self._keyset_cursor(after)
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            if connection.execute("SELECT 1 FROM threads WHERE id = ?", (thread_id,)).fetchone() is None:
+                raise KeyError(f"unknown thread: {thread_id}")
+            parameters: list[Any] = [thread_id]
+            clause = ""
+            if after:
+                cursor = connection.execute(
+                    "SELECT created_at, id FROM comments WHERE thread_id = ? AND id = ?",
+                    (thread_id, after),
+                ).fetchone()
+                if cursor is None:
+                    raise KeyError(f"unknown comment cursor: {after}")
+                clause = "AND (c.created_at > ? OR (c.created_at = ? AND c.id > ?))"
+                parameters.extend((cursor["created_at"], cursor["created_at"], cursor["id"]))
+            comment_filter = "" if include_coordination else f"AND {_discussion_comment_sql('c')}"
+            rows = connection.execute(
+                f"SELECT c.* FROM comments c WHERE c.thread_id = ? {clause} {comment_filter} "
+                "ORDER BY c.created_at, c.id LIMIT ?",
+                (*parameters, limit + 1),
+            ).fetchall()
+            items = self._comment_details(connection, rows[:limit])
+        has_more = len(rows) > limit
+        return {"items": items, "next_cursor": items[-1]["id"] if has_more else None,
+                "has_more": has_more}
 
     def list_threads(self, run_id: str, limit: int = 100) -> list[dict[str, Any]]:
         with self._connection() as connection:
@@ -431,6 +710,7 @@ class Forum:
         limit: int = 30,
         before: str | None = None,
         query: str = "",
+        include_coordination: bool = True,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Return one keyset-paginated page without loading full thread bodies.
 
@@ -444,6 +724,10 @@ class Forum:
 
         clauses = ["t.run_id = ?"]
         parameters: list[Any] = [run_id]
+        comment_filter = "1" if include_coordination else _discussion_comment_sql("c")
+        search_comment_filter = (
+            "1" if include_coordination else _discussion_comment_sql("search_comments")
+        )
         with self._connection() as connection:
             if before:
                 cursor = connection.execute(
@@ -464,10 +748,11 @@ class Forum:
                         t.title LIKE ? OR t.body LIKE ? OR EXISTS (
                             SELECT 1 FROM comments search_comments
                             WHERE search_comments.thread_id = t.id
+                              AND {search_comment_filter}
                               AND search_comments.body LIKE ?
                         )
                     )
-                    """
+                    """.format(search_comment_filter=search_comment_filter)
                 )
                 parameters.extend((pattern, pattern, pattern))
 
@@ -482,14 +767,16 @@ class Forum:
                     t.created_at,
                     SUBSTR(t.body, 1, 240) AS preview,
                     LENGTH(t.body) AS body_length,
-                    (SELECT COUNT(*) FROM comments c WHERE c.thread_id = t.id)
+                    (SELECT COUNT(*) FROM comments c
+                     WHERE c.thread_id = t.id AND {comment_filter})
                         AS comment_count,
                     (SELECT COUNT(*) FROM attachments a WHERE a.thread_id = t.id)
                         AS attachment_count,
                     MAX(
                         t.created_at,
                         COALESCE(
-                            (SELECT MAX(c.created_at) FROM comments c WHERE c.thread_id = t.id),
+                            (SELECT MAX(c.created_at) FROM comments c
+                             WHERE c.thread_id = t.id AND {comment_filter}),
                             t.created_at
                         ),
                         COALESCE(
@@ -510,7 +797,9 @@ class Forum:
         next_cursor = items[-1]["id"] if has_more and items else None
         return items, next_cursor
 
-    def count_threads(self, run_id: str, query: str = "") -> int:
+    def count_threads(
+        self, run_id: str, query: str = "", *, include_coordination: bool = True,
+    ) -> int:
         query = query.strip()
         with self._connection() as connection:
             if not query:
@@ -520,15 +809,16 @@ class Forum:
                     ).fetchone()[0]
                 )
             pattern = f"%{query}%"
+            comment_filter = "1" if include_coordination else _discussion_comment_sql("c")
             return int(
                 connection.execute(
-                    """
+                    f"""
                     SELECT COUNT(*)
                     FROM threads t
                     WHERE t.run_id = ? AND (
                         t.title LIKE ? OR t.body LIKE ? OR EXISTS (
                             SELECT 1 FROM comments c
-                            WHERE c.thread_id = t.id AND c.body LIKE ?
+                            WHERE c.thread_id = t.id AND {comment_filter} AND c.body LIKE ?
                         )
                     )
                     """,
@@ -536,32 +826,56 @@ class Forum:
                 ).fetchone()[0]
             )
 
-    def add_comment(self, thread_id: str, author: str, body: str) -> dict[str, Any]:
-        comment_id = _id("comment")
+    def add_comment(
+        self, thread_id: str, author: str, body: str, *,
+        reply_to_event_id: int | None = None, relation: str = "reply",
+        artifact_id: str | None = None, validation: str = "",
+        evidence_event_ids: Iterable[int] = (),
+    ) -> dict[str, Any]:
         with self._connection() as connection:
-            thread = connection.execute(
-                "SELECT run_id FROM threads WHERE id = ?", (thread_id,)
-            ).fetchone()
-            if thread is None:
-                raise KeyError(f"unknown thread: {thread_id}")
-            connection.execute(
-                """
-                INSERT INTO comments(id, thread_id, author, body, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (comment_id, thread_id, author, body, _now()),
+            # Reference validation, post, notifications, and provenance commit
+            # together. The references necessarily predate the new event.
+            connection.execute("BEGIN IMMEDIATE")
+            return self._add_comment(
+                connection, thread_id, author, body,
+                reply_to_event_id=reply_to_event_id, relation=relation,
+                artifact_id=artifact_id, validation=validation,
+                evidence_event_ids=evidence_event_ids,
             )
-            self._record_activity(
-                connection,
-                run_id=str(thread["run_id"]),
-                author=author,
-                kind="comment",
-                subject_id=comment_id,
-                thread_id=thread_id,
-                text=body,
-            )
-            row = connection.execute("SELECT * FROM comments WHERE id = ?", (comment_id,)).fetchone()
-        result = dict(row)
+
+    def _add_comment(
+        self, connection: sqlite3.Connection, thread_id: str, author: str, body: str, *,
+        reply_to_event_id: int | None = None, relation: str = "reply",
+        artifact_id: str | None = None, validation: str = "",
+        evidence_event_ids: Iterable[int] = (), notification_text: str | None = None,
+    ) -> dict[str, Any]:
+        """Append within the caller's transaction, including related domain records.
+
+        Generated reports can provide empty notification_text so quoted mentions
+        do not broadcast again. Chosen subscription delivery remains unchanged.
+        """
+        comment_id = _id("comment")
+        thread = connection.execute("SELECT run_id FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        if thread is None:
+            raise KeyError(f"unknown thread: {thread_id}")
+        metadata = provenance.validate(
+            connection, str(thread["run_id"]), author,
+            reply_to_event_id=reply_to_event_id, relation=relation,
+            artifact_id=artifact_id, validation=validation,
+            evidence_event_ids=evidence_event_ids,
+        )
+        connection.execute(
+            "INSERT INTO comments(id, thread_id, author, body, created_at) VALUES (?, ?, ?, ?, ?)",
+            (comment_id, thread_id, author, body, _now()),
+        )
+        event_id = self._record_activity(
+            connection, run_id=str(thread["run_id"]), author=author, kind="comment",
+            subject_id=comment_id, thread_id=thread_id,
+            text=body if notification_text is None else notification_text,
+        )
+        provenance.record(connection, comment_id, event_id, str(thread["run_id"]), metadata)
+        row = connection.execute("SELECT * FROM comments WHERE id = ?", (comment_id,)).fetchone()
+        result = provenance.enrich_comments(connection, [row])[0]
         result["run_id"] = str(thread["run_id"])
         return result
 
@@ -639,6 +953,375 @@ class Forum:
         if row is None:
             raise KeyError(f"unknown attachment: {attachment_id}")
         return dict(row)
+
+    @staticmethod
+    def _page_limit(limit: int, *, maximum: int = 100) -> None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= maximum:
+            raise ValueError(f"limit must be between 1 and {maximum}")
+
+    @staticmethod
+    def _keyset_cursor(after: str | None) -> str:
+        if after is not None and not isinstance(after, str):
+            raise ValueError("after must be a record ID string")
+        return after or ""
+
+    @staticmethod
+    def _subscription_scope(
+        connection: sqlite3.Connection, agent_id: str, thread_id: str
+    ) -> None:
+        agent = connection.execute("SELECT run_id FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        thread = connection.execute("SELECT run_id FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        if agent is None:
+            raise KeyError(f"unknown agent: {agent_id}")
+        if thread is None:
+            raise KeyError(f"unknown thread: {thread_id}")
+        if agent["run_id"] != thread["run_id"]:
+            raise ValueError("subscription thread must belong to the agent's run")
+
+    def subscribe(self, agent_id: str, thread_id: str, *, wake: bool = False) -> dict[str, Any]:
+        with self._connection() as connection:
+            self._subscription_scope(connection, agent_id, thread_id)
+            connection.execute(
+                """
+                INSERT INTO thread_subscriptions(agent_id, thread_id, wake, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(agent_id, thread_id) DO UPDATE SET wake = excluded.wake
+                """,
+                (agent_id, thread_id, int(bool(wake)), _now()),
+            )
+            row = connection.execute(
+                "SELECT * FROM thread_subscriptions WHERE agent_id = ? AND thread_id = ?",
+                (agent_id, thread_id),
+            ).fetchone()
+        return dict(row) | {"wake": bool(row["wake"])}
+
+    def unsubscribe(self, agent_id: str, thread_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            self._subscription_scope(connection, agent_id, thread_id)
+            deleted = connection.execute(
+                "DELETE FROM thread_subscriptions WHERE agent_id = ? AND thread_id = ?",
+                (agent_id, thread_id),
+            )
+        return {"agent_id": agent_id, "thread_id": thread_id, "removed": bool(deleted.rowcount)}
+
+    def list_subscriptions(
+        self, agent_id: str, *, limit: int = 50, after: str | None = None
+    ) -> dict[str, Any]:
+        self._page_limit(limit)
+        after = self._keyset_cursor(after)
+        self.get_agent(agent_id)
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                WITH interests AS (
+                    SELECT thread_id,wake,created_at,1 AS explicit_follow,NULL AS approach_id
+                    FROM thread_subscriptions WHERE agent_id=?
+                    UNION ALL
+                    SELECT a.thread_id,m.wake,m.joined_at,0,a.id
+                    FROM approach_members m JOIN approaches a ON a.id=m.approach_id
+                    JOIN agents p ON p.id=m.agent_id AND p.run_id=a.run_id
+                    WHERE m.agent_id=? AND m.left_at IS NULL AND p.process_state!='retired'
+                )
+                SELECT ? AS agent_id,i.thread_id,MAX(i.wake) AS wake,MIN(i.created_at) AS created_at,
+                       MAX(i.explicit_follow) AS explicit_follow,MAX(i.approach_id) AS approach_id,
+                       SUBSTR(t.title,1,240) AS thread_title
+                FROM interests i JOIN threads t ON t.id=i.thread_id
+                WHERE i.thread_id>? GROUP BY i.thread_id ORDER BY i.thread_id LIMIT ?
+                """,
+                (agent_id, agent_id, agent_id, after or "", limit + 1),
+            ).fetchall()
+        items = [dict(row) | {"wake": bool(row["wake"])} for row in rows[:limit]]
+        return {"items": items, "next_cursor": items[-1]["thread_id"] if len(rows) > limit else None}
+
+    def search_agents(
+        self, run_id: str, *, query: str = "", limit: int = 30, after: str | None = None
+    ) -> dict[str, Any]:
+        self._page_limit(limit)
+        after = self._keyset_cursor(after)
+        if not isinstance(query, str):
+            raise ValueError("query must be a string")
+        self.get_run(run_id)
+        # Escape LIKE metacharacters: this is a literal directory search.
+        pattern = "%" + query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, run_id, name, provider, model, effort, process_state,
+                       created_at, started_at, exited_at, retired_at, retire_reason,
+                       participation_state, parked_at
+                FROM agents WHERE run_id = ? AND id > ?
+                  AND (name LIKE ? ESCAPE '\\' OR model LIKE ? ESCAPE '\\'
+                       OR provider LIKE ? ESCAPE '\\')
+                ORDER BY id LIMIT ?
+                """,
+                (run_id, after or "", pattern, pattern, pattern, limit + 1),
+            ).fetchall()
+        items = [dict(row) for row in rows[:limit]]
+        return {"items": items, "next_cursor": items[-1]["id"] if len(rows) > limit else None}
+
+    @staticmethod
+    def _approaches_for_threads(
+        connection: sqlite3.Connection, thread_ids: Iterable[str], *, preview: bool = True,
+    ) -> dict[str, dict[str, Any]]:
+        identifiers = list(dict.fromkeys(thread_ids))
+        if not identifiers:
+            return {}
+        rows = connection.execute("""
+            SELECT id,thread_id,parent_id,event_id,
+                   CASE WHEN ? THEN SUBSTR(hypothesis,1,512) ELSE hypothesis END AS hypothesis,
+                   CASE WHEN ? THEN SUBSTR(next_check,1,512) ELSE next_check END AS next_check,
+                   LENGTH(hypothesis)>512 AS hypothesis_truncated,LENGTH(next_check)>512 AS next_check_truncated
+            FROM approaches WHERE thread_id IN (SELECT value FROM json_each(?))
+        """, (int(preview), int(preview), json.dumps(identifiers))).fetchall()
+        result = {}
+        for row in rows:
+            value = dict(row)
+            for key in ("hypothesis_truncated", "next_check_truncated"):
+                value[key] = preview and bool(value[key])
+            result[value["thread_id"]] = value
+        return result
+
+    @staticmethod
+    def _comment_details(connection: sqlite3.Connection, rows: Iterable[Any]) -> list[dict[str, Any]]:
+        from .reports import metadata_for_events
+
+        items = provenance.enrich_comments(connection, rows)
+        metadata = metadata_for_events(connection, (item["event_id"] for item in items if item.get("event_id")))
+        for item in items:
+            item.update(metadata.get(item.get("event_id"), {}))
+        return items
+
+    @staticmethod
+    def _activity_preview(connection: sqlite3.Connection, item: dict[str, Any]) -> dict[str, Any]:
+        return Forum._activity_previews(connection, [item])[0]
+
+    @staticmethod
+    def _activity_previews(
+        connection: sqlite3.Connection, items: Iterable[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Read a bounded excerpt in SQL; never load the full body for a feed."""
+        results = [dict(item) for item in items]
+        if not results:
+            return []
+        ids = [int(item["id"]) for item in results]
+        rows = connection.execute(
+            """
+            SELECT e.id, SUBSTR(t.title, 1, 240) AS thread_title,
+                   SUBSTR(CASE e.kind WHEN 'thread' THEN t.body WHEN 'comment' THEN c.body
+                          WHEN 'attachment' THEN a.description ELSE '' END, 1, 2000) AS content,
+                   LENGTH(CASE e.kind WHEN 'thread' THEN t.body WHEN 'comment' THEN c.body
+                          WHEN 'attachment' THEN a.description ELSE '' END) > 2000 AS clipped,
+                   SUBSTR(a.original_name, 1, 240) AS attachment_name
+            FROM activity e LEFT JOIN threads t ON t.id = e.thread_id
+            LEFT JOIN comments c ON e.kind = 'comment' AND c.id = e.subject_id
+            LEFT JOIN attachments a ON e.kind = 'attachment' AND a.id = e.subject_id
+            WHERE e.id IN (SELECT value FROM json_each(?))
+            """,
+            (json.dumps(ids),),
+        ).fetchall()
+        excerpts = {int(row["id"]): row for row in rows}
+        metadata = provenance.for_events(connection, ids, preview=True)
+        from .reports import metadata_for_events
+
+        reports = metadata_for_events(connection, ids, preview=True)
+        approaches = Forum._approaches_for_threads(connection, (item["thread_id"] for item in results if item.get("thread_id")))
+        for result in results:
+            # Routing is already indexed by recipient. Copying a large audience
+            # list into every recipient's prompt amplifies broadcast payloads.
+            result.pop("audience_json", None)
+            result["event_id"] = int(result["id"])
+            result.update(reports.get(result["event_id"], {}))
+            row = excerpts.get(result["event_id"])
+            if row is not None:
+                result.update(thread_title=row["thread_title"], content=row["content"],
+                              content_truncated=bool(row["clipped"]))
+                if row["attachment_name"] is not None:
+                    result["attachment_name"] = row["attachment_name"]
+            if result["event_id"] in metadata:
+                result["provenance"] = metadata[result["event_id"]]
+            if result.get("thread_id") in approaches:
+                result["approach"] = approaches[result["thread_id"]]
+        return results
+
+    def thread_changes(
+        self, thread_id: str, *, after_event: int = 0,
+        through_event: int | None = None, limit: int = 30,
+    ) -> dict[str, Any]:
+        """Read append-only event previews within a frozen, resumable interval.
+
+        Pass the returned through_event on later pages and next_cursor as
+        after_event. Full source text remains available through thread reads.
+        Reading changes never acknowledges runtime notification delivery.
+        """
+        self._page_limit(limit)
+        provenance.event_id(after_event, "after_event", allow_zero=True)
+        if through_event is not None:
+            provenance.event_id(through_event, "through_event", allow_zero=True)
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            thread = connection.execute(
+                "SELECT run_id FROM threads WHERE id = ?", (thread_id,),
+            ).fetchone()
+            if thread is None:
+                raise KeyError(f"unknown thread: {thread_id}")
+            high_water = int(connection.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM activity WHERE run_id = ?",
+                (thread["run_id"],),
+            ).fetchone()[0])
+            # A caller cannot freeze an as-yet-unwritten future range: return
+            # the concrete upper bound so later pagination remains reproducible.
+            frozen = high_water if through_event is None else min(through_event, high_water)
+            rows = connection.execute(
+                "SELECT * FROM activity WHERE thread_id = ? AND run_id = ? "
+                "AND id > ? AND id <= ? ORDER BY id LIMIT ?",
+                (thread_id, thread["run_id"], after_event, frozen, limit + 1),
+            ).fetchall()
+            items = self._activity_previews(connection, rows[:limit])
+        has_more = len(rows) > limit
+        return {"items": items, "next_cursor": int(items[-1]["id"]) if has_more else None,
+                "through_event": frozen, "has_more": has_more, "content_format": "preview"}
+
+    def activity_page(
+        self, agent_id: str, *, scope: str = "following", after: int | None = None, limit: int = 30
+    ) -> dict[str, Any]:
+        self._page_limit(limit)
+        if not isinstance(scope, str) or scope not in {"following", "all"}:
+            raise ValueError("activity scope must be 'following' or 'all'")
+        if after is not None and (
+            isinstance(after, bool) or not isinstance(after, int)
+            or not 0 <= after <= 9_223_372_036_854_775_807
+        ):
+            raise ValueError("after must be a non-negative 64-bit event ID")
+        with self._connection() as connection:
+            # Freeze both high-water and page in one read snapshot. Events arriving
+            # later cannot accidentally advance the returned cursor past a page.
+            connection.execute("BEGIN")
+            agent = connection.execute(
+                "SELECT run_id, name, last_activity_id FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            if agent is None:
+                raise KeyError(f"unknown agent: {agent_id}")
+            cursor = int(agent["last_activity_id"]) if after is None else after
+            high_water = int(connection.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM activity WHERE run_id = ?", (agent["run_id"],)
+            ).fetchone()[0])
+            if scope == "following":
+                rows = connection.execute(
+                    """
+                    WITH subscription_events AS (
+                        SELECT e.id FROM thread_subscriptions s
+                        JOIN activity e ON e.thread_id = s.thread_id
+                        WHERE s.agent_id = ? AND e.id > ? AND e.id <= ?
+                          AND e.author != ? COLLATE NOCASE
+                        ORDER BY e.id LIMIT ?
+                    ), approach_events AS (
+                        SELECT e.id FROM approach_members m JOIN approaches a ON a.id=m.approach_id
+                        JOIN activity e ON e.thread_id=a.thread_id AND e.run_id=a.run_id
+                        WHERE m.agent_id=? AND m.left_at IS NULL AND e.id>? AND e.id<=?
+                          AND e.author!=? COLLATE NOCASE
+                        ORDER BY e.id LIMIT ?
+                    ), direct_events AS (
+                        SELECT d.event_id AS id FROM notification_deliveries d
+                        WHERE d.agent_id = ? AND d.event_id > ? AND d.event_id <= ?
+                        ORDER BY d.event_id LIMIT ?
+                    ), followed_events AS (
+                        SELECT id FROM subscription_events UNION SELECT id FROM approach_events
+                        UNION SELECT id FROM direct_events
+                    )
+                    SELECT e.* FROM followed_events f JOIN activity e ON e.id = f.id
+                    WHERE e.run_id = ? AND e.author != ? COLLATE NOCASE
+                    ORDER BY e.id LIMIT ?
+                    """,
+                    (agent_id, cursor, high_water, agent["name"], limit + 1,
+                     agent_id, cursor, high_water, agent["name"], limit + 1,
+                     agent_id, cursor, high_water, limit + 1,
+                     agent["run_id"], agent["name"], limit + 1),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT e.* FROM activity e
+                    WHERE e.run_id = ? AND e.id > ? AND e.id <= ?
+                      AND e.author != ? COLLATE NOCASE ORDER BY e.id LIMIT ?
+                    """,
+                    (agent["run_id"], cursor, high_water, agent["name"], limit + 1),
+                ).fetchall()
+            items = self._activity_previews(connection, rows[:limit])
+        has_more = len(rows) > limit
+        through_id = int(items[-1]["id"]) if has_more else max(cursor, high_water)
+        return {"items": items, "next_cursor": through_id if has_more else None,
+                "through_id": through_id, "has_more": has_more}
+
+    def pending_notifications(
+        self, agent_id: str, *, limit: int = 20, after: int = 0, explicit_only: bool = False
+    ) -> list[dict[str, Any]]:
+        self._page_limit(limit)
+        if isinstance(after, bool) or not isinstance(after, int) or not 0 <= after <= 9_223_372_036_854_775_807:
+            raise ValueError("after must be a non-negative 64-bit event ID")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT e.*, d.notification_reason, d.priority
+                FROM notification_deliveries d JOIN activity e ON e.id = d.event_id
+                WHERE d.agent_id = ? AND d.acknowledged_at IS NULL
+                  AND d.withdrawn_at IS NULL
+                  AND d.event_id > ?
+                  AND (? = 0 OR d.notification_reason IN ('mention', 'broadcast'))
+                ORDER BY d.priority, d.event_id LIMIT ?
+                """,
+                (agent_id, after, int(explicit_only), limit),
+            ).fetchall()
+            return self._activity_previews(connection, rows)
+
+    def pending_notification_agents(self, run_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        self._page_limit(limit, maximum=10_000)
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT d.agent_id, MIN(d.priority) AS priority, MIN(d.event_id) AS first_event_id,
+                       MAX(d.event_id) AS last_event_id,
+                       MAX(CASE WHEN d.notification_reason IN ('mention', 'broadcast')
+                                THEN d.event_id ELSE 0 END) AS last_explicit_event_id
+                FROM notification_deliveries d JOIN agents p ON p.id = d.agent_id
+                WHERE d.run_id = ? AND d.acknowledged_at IS NULL AND p.process_state != 'retired'
+                  AND d.withdrawn_at IS NULL
+                GROUP BY d.agent_id ORDER BY first_event_id, priority, d.agent_id LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def acknowledge_notifications(
+        self, agent_id: str, event_ids: Iterable[int], *, connection: sqlite3.Connection | None = None
+    ) -> None:
+        ids = sorted(set(int(event_id) for event_id in event_ids))
+        if not ids:
+            return
+        if connection is None:
+            with self._connection() as owned:
+                self.acknowledge_notifications(agent_id, ids, connection=owned)
+            return
+        connection.execute(
+            """
+            UPDATE notification_deliveries SET acknowledged_at = ?
+            WHERE agent_id = ? AND acknowledged_at IS NULL
+              AND event_id IN (SELECT value FROM json_each(?))
+            """,
+            (_now(), agent_id, json.dumps(ids)),
+        )
+
+    def notification_counts(self, run_id: str) -> dict[str, int]:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS pending_events, COUNT(DISTINCT d.agent_id) AS pending_agents
+                FROM notification_deliveries d JOIN agents p ON p.id = d.agent_id
+                WHERE d.run_id = ? AND d.acknowledged_at IS NULL AND p.process_state != 'retired'
+                  AND d.withdrawn_at IS NULL
+                """,
+                (run_id,),
+            ).fetchone()
+        return {"pending_events": int(row["pending_events"]), "pending_agents": int(row["pending_agents"])}
 
     def unseen_activity(self, agent_id: str) -> tuple[list[dict[str, Any]], int]:
         """Return readable external events since this peer's inbox cursor.
@@ -785,6 +1468,8 @@ class Forum:
     ) -> dict[str, Any]:
         """Resolve an explicit mention to the thread where a direct reply belongs."""
 
+        if event_id is not None:
+            provenance.event_id(event_id, "event")
         with self._connection() as connection:
             agent = connection.execute(
                 "SELECT run_id, name FROM agents WHERE id = ?", (agent_id,)
@@ -882,15 +1567,24 @@ class Forum:
                 ).fetchone()[0]
             )
 
-    def activity_summary(self, run_id: str, after_id: int = 0) -> dict[str, int]:
+    def activity_summary(
+        self, run_id: str, after_id: int = 0, *, include_coordination: bool = True,
+    ) -> dict[str, int]:
         """Return a constant-size update signal for browser polling."""
 
+        activity_filter = (
+            "1"
+            if include_coordination
+            else f"(event.kind != 'comment' OR ({_discussion_comment_sql('c')}))"
+        )
         with self._connection() as connection:
             high_water = connection.execute(
                 "SELECT COALESCE(MAX(id), 0) FROM activity WHERE run_id = ?", (run_id,)
             ).fetchone()[0]
             new_count = connection.execute(
-                "SELECT COUNT(*) FROM activity WHERE run_id = ? AND id > ?",
+                f"""SELECT COUNT(*) FROM activity event
+                    LEFT JOIN comments c ON event.kind='comment' AND c.id=event.subject_id
+                    WHERE event.run_id = ? AND event.id > ? AND {activity_filter}""",
                 (run_id, after_id),
             ).fetchone()[0]
         return {"high_water": int(high_water), "new_count": int(new_count)}
@@ -996,17 +1690,20 @@ class Forum:
             "has_more": int(cursor) < high_water,
         }
 
-    def run_statistics(self, run_id: str) -> dict[str, int]:
+    def run_statistics(
+        self, run_id: str, *, include_coordination: bool = True,
+    ) -> dict[str, int]:
+        comment_filter = "1" if include_coordination else _discussion_comment_sql("c")
         with self._connection() as connection:
             row = connection.execute(
-                """
+                f"""
                 SELECT
                     (SELECT COUNT(*) FROM threads WHERE run_id = ?) AS thread_count,
                     (
                         SELECT COUNT(*)
                         FROM comments c
                         JOIN threads t ON t.id = c.thread_id
-                        WHERE t.run_id = ?
+                        WHERE t.run_id = ? AND {comment_filter}
                     ) AS comment_count,
                     (SELECT COUNT(*) FROM attachments WHERE run_id = ?) AS attachment_count
                 """,

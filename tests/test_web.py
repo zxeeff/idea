@@ -196,6 +196,9 @@ class WebForumTest(unittest.TestCase):
         self.assertIn(".markdown-body pre", page)
         self.assertIn(".markdown-body table", page)
         self.assertIn(".markdown-body .markdown-table-wrap", page)
+        self.assertIn('"button quiet reply-action", "답글"', page)
+        self.assertIn(".comment-heading > .reply-action", page)
+        self.assertIn("margin-left: auto", page)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is needed for the DOM renderer test")
     def test_markdown_renderer_handles_real_world_nested_content(self) -> None:

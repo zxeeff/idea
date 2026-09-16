@@ -4,8 +4,10 @@ import asyncio
 import json
 import os
 import re
+import signal
 import shutil
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,8 +16,12 @@ from .domain import AgentProfile, ProcessState, Provider
 from .forum import Forum
 
 
-_CODEX_PERMISSION_PROFILE = "idea-workspace-only"
-_CLAUDE_RESTRICTED_TOOLS = "Bash,Edit,Glob,Grep,Read,Write"
+_CLAUDE_PEER_TOOLS = "Bash,Edit,Glob,Grep,Read,Write,WebFetch,WebSearch"
+_IDEA_MCP_TOOLS = ("post", "reply", "reply_trigger", "forum")
+_IDEA_MCP_ENVIRONMENT = (
+    "PYTHONPATH", "IDEA_STATE_DIR", "IDEA_RUN_ID", "IDEA_AGENT_ID", "IDEA_AGENT_NAME",
+    "IDEA_BRIDGE_DIR", "IDEA_TRIGGER_EVENT_ID", "IDEA_TRIGGER_THREAD_ID",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +29,7 @@ class Invocation:
     argv: tuple[str, ...]
     cwd: Path
     env: dict[str, str]
+    inherited_fds: tuple[int, ...] = ()
 
 
 def _module_root() -> Path:
@@ -30,134 +37,86 @@ def _module_root() -> Path:
 
 
 def validate_workspace_boundary(*, workspace: Path, state_dir: Path) -> tuple[Path, Path]:
-    """Resolve and validate paths that autonomous peers are allowed to modify."""
+    """Keep shared run state under the original workspace's storage layout."""
 
     workspace = workspace.expanduser().resolve()
     state_dir = state_dir.expanduser().resolve()
     if not state_dir.is_relative_to(workspace):
         raise ValueError(
-            "sandboxed agents require the forum state directory to be inside the workspace: "
+            "IDEA requires the forum state directory to be inside the workspace: "
             f"{state_dir} is outside {workspace}"
         )
     return workspace, state_dir
 
 
-def _runtime_read_roots(workspace: Path) -> tuple[Path, ...]:
-    """Return narrow read-only exceptions needed to run IDEA's forum client."""
-
-    candidates = {
-        _module_root(),
-        Path(sys.prefix).expanduser().resolve(),
-        Path(sys.base_prefix).expanduser().resolve(),
-    }
-    return tuple(
-        sorted(
-            (path for path in candidates if not path.is_relative_to(workspace)),
-            key=str,
-        )
-    )
+def _mcp_environment(env: dict[str, str]) -> dict[str, str]:
+    return {name: env[name] for name in _IDEA_MCP_ENVIRONMENT if name in env}
 
 
-def _claude_system_read_roots() -> tuple[Path, ...]:
-    """Return the narrow OS paths required to launch ordinary local tools."""
-
-    candidates = (
-        Path("/bin"),
-        Path("/sbin"),
-        Path("/usr/bin"),
-        Path("/usr/sbin"),
-        Path("/usr/lib"),
-        Path("/usr/libexec"),
-        Path("/usr/share"),
-        Path("/lib"),
-        Path("/lib64"),
-        Path("/System"),
-        Path("/Library/Developer/CommandLineTools"),
-        Path("/Applications/Xcode.app/Contents/Developer"),
-        Path("/dev"),
-        Path("/proc/self"),
-        Path("/proc/thread-self"),
-        Path("/etc/ld.so.cache"),
-        Path("/etc/passwd"),
-        Path("/etc/group"),
-        Path("/etc/nsswitch.conf"),
-    )
-    return tuple(path for path in candidates if path.exists())
-
-
-def _toml_string_map(values: dict[str, str]) -> str:
-    entries = (
-        f"{json.dumps(key, ensure_ascii=True)}={json.dumps(value, ensure_ascii=True)}"
-        for key, value in values.items()
-    )
-    return "{" + ",".join(entries) + "}"
-
-
-def _codex_sandbox_args(workspace: Path) -> tuple[str, ...]:
-    filesystem = {
-        ":root": "deny",
-        ":minimal": "read",
-        ":tmpdir": "deny",
-        ":slash_tmp": "deny",
-    }
-    filesystem.update({str(path): "read" for path in _runtime_read_roots(workspace)})
-    return (
+def _codex_execution_args(workspace: Path, env: dict[str, str]) -> tuple[str, ...]:
+    base = (
+        "--dangerously-bypass-approvals-and-sandbox",
         "--strict-config",
         "--ignore-user-config",
         "--ignore-rules",
         "--config",
         (
-            f"projects.{json.dumps(str(workspace), ensure_ascii=True)}."
-            'trust_level="untrusted"'
+            # --config splits its key on dots, including dots inside quoted
+            # path components such as .idea-swarm. Parse paths as TOML values.
+            'projects={' + json.dumps(str(workspace), ensure_ascii=False)
+            + '={trust_level="untrusted"}}'
         ),
         "--config",
         'approval_policy="never"',
         "--config",
-        f'default_permissions="{_CODEX_PERMISSION_PROFILE}"',
-        "--config",
-        f'permissions.{_CODEX_PERMISSION_PROFILE}.extends=":workspace"',
-        "--config",
-        (
-            f"permissions.{_CODEX_PERMISSION_PROFILE}.filesystem="
-            f"{_toml_string_map(filesystem)}"
-        ),
-        "--config",
-        f"permissions.{_CODEX_PERMISSION_PROFILE}.network.enabled=false",
-        "--config",
         "shell_environment_policy.ignore_default_excludes=false",
+        "--config",
+        "mcp_servers.idea.command=" + json.dumps(sys.executable, ensure_ascii=False),
+        "--config",
+        'mcp_servers.idea.args=["-m","idea.mcp_server"]',
+        "--config",
+        "mcp_servers.idea.enabled=true",
+        "--config",
+        "mcp_servers.idea.required=true",
+        "--config",
+        "mcp_servers.idea.enabled_tools=" + json.dumps(list(_IDEA_MCP_TOOLS), separators=(",", ":")),
+        "--config",
+        "mcp_servers.idea.startup_timeout_sec=10",
+        "--config",
+        "mcp_servers.idea.tool_timeout_sec=45",
+        "--config",
+        'mcp_servers.idea.default_tools_approval_mode="approve"',
     )
+    explicit_environment = tuple(
+        value
+        for name, item in _mcp_environment(env).items()
+        for value in (
+            "--config",
+            f"mcp_servers.idea.env.{name}=" + json.dumps(item, ensure_ascii=False),
+        )
+    )
+    return base + explicit_environment
 
 
-def _claude_sandbox_settings(workspace: Path) -> str:
-    read_roots = (
-        workspace,
-        *_runtime_read_roots(workspace),
-        *_claude_system_read_roots(),
-    )
+def _claude_execution_settings() -> str:
     settings = {
         "disableAllHooks": True,
-        "permissions": {"disableBypassPermissionsMode": "disable"},
-        "sandbox": {
-            "enabled": True,
-            "failIfUnavailable": True,
-            "autoAllowBashIfSandboxed": True,
-            "allowUnsandboxedCommands": False,
-            "excludedCommands": [],
-            "filesystem": {
-                # Restricted mode confines built-in file tools. These rules apply the
-                # same boundary to Bash while preserving the OS and IDEA runtimes.
-                "denyRead": ["/"],
-                "allowRead": [str(path) for path in read_roots],
-                "allowWrite": [],
-            },
-            "network": {
-                "allowedDomains": [],
-                "strictAllowlist": True,
-                "allowLocalBinding": False,
-            },
-        },
+        "sandbox": {"enabled": False},
     }
     return json.dumps(settings, ensure_ascii=False, separators=(",", ":"))
+
+
+def _claude_mcp_config(env: dict[str, str]) -> str:
+    return json.dumps({
+        "mcpServers": {
+            "idea": {
+                "type": "stdio",
+                "command": sys.executable,
+                "args": ["-m", "idea.mcp_server"],
+                "env": _mcp_environment(env),
+            }
+        }
+    }, ensure_ascii=False, separators=(",", ":"))
 
 
 def agent_environment(
@@ -172,6 +131,7 @@ def agent_environment(
     # The browser password belongs to the launcher process. Never expose it to
     # autonomous provider subprocesses.
     env.pop("IDEA_WEB_PASSWORD", None)
+    env.pop("IDEA_BRIDGE_DIR", None)
     existing_pythonpath = env.get("PYTHONPATH")
     module_root = str(_module_root())
     env["PYTHONPATH"] = (
@@ -209,11 +169,18 @@ def build_invocation(
     resume_session_id: str | None = None,
     trigger_event_id: int | None = None,
     trigger_thread_id: str | None = None,
+    bridge_dir: Path | None = None,
 ) -> Invocation:
-    workspace, state_dir = validate_workspace_boundary(
-        workspace=workspace,
-        state_dir=state_dir,
-    )
+    if bridge_dir is None:
+        workspace, state_dir = validate_workspace_boundary(workspace=workspace, state_dir=state_dir)
+    else:
+        workspace = workspace.expanduser().resolve()
+        bridge_dir = bridge_dir.expanduser().resolve()
+        if bridge_dir != workspace / ".idea-peer":
+            raise ValueError("peer mailbox must be inside its isolated workspace")
+        # Forum commands use the identity-bound local mailbox. This routing is
+        # independent of the provider's unrestricted host permissions.
+        state_dir = bridge_dir
     env = agent_environment(
         state_dir=state_dir,
         run_id=run_id,
@@ -221,6 +188,8 @@ def build_invocation(
         trigger_event_id=trigger_event_id,
         trigger_thread_id=trigger_thread_id,
     )
+    if bridge_dir is not None:
+        env["IDEA_BRIDGE_DIR"] = str(bridge_dir)
     if profile.provider is Provider.OPENAI:
         executable = shutil.which("codex") or "codex"
         common = (
@@ -230,7 +199,7 @@ def build_invocation(
             f'model_reasoning_effort="{profile.effort.value}"',
             "--config",
             f"developer_instructions={json.dumps(system_prompt, ensure_ascii=False)}",
-            *_codex_sandbox_args(workspace),
+            *_codex_execution_args(workspace, env),
         )
         if resume_session_id:
             argv = (
@@ -257,7 +226,9 @@ def build_invocation(
     elif profile.provider is Provider.ANTHROPIC:
         executable = shutil.which("claude") or "claude"
         env["CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR"] = "1"
-        env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] = "1"
+        # A true value forces permissionMode=default even with the bypass flag.
+        # Override an inherited value as well as the old IDEA default.
+        env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] = "0"
         resume_args = ("--resume", resume_session_id) if resume_session_id else ()
         argv = (
             executable,
@@ -266,16 +237,17 @@ def build_invocation(
             profile.model,
             "--effort",
             profile.effort.value,
-            "--restricted",
+            "--dangerously-skip-permissions",
+            "--setting-sources=",
             "--strict-mcp-config",
+            "--mcp-config",
+            _claude_mcp_config(env),
             "--tools",
-            _CLAUDE_RESTRICTED_TOOLS,
-            "--disallowed-tools",
-            "mcp__*",
-            "--permission-mode",
-            "acceptEdits",
+            _CLAUDE_PEER_TOOLS,
+            "--allowedTools",
+            ",".join(f"mcp__idea__{name}" for name in _IDEA_MCP_TOOLS),
             "--settings",
-            _claude_sandbox_settings(workspace),
+            _claude_execution_settings(),
             "--append-system-prompt",
             system_prompt,
             "--output-format",
@@ -312,6 +284,65 @@ def log_reports_final_safeguard_refusal(path: Path, tail_bytes: int = 2 * 1024 *
     return bool(_FINAL_REFUSAL_PATTERN.search(tail))
 
 
+_PROCESS_STOP_GRACE = 3.0
+
+
+async def _settle(task: asyncio.Future[Any]) -> Any:
+    """Finish a spawn/cleanup even if shutdown is requested more than once."""
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                return task.result()
+
+
+async def _stop_process_tree(
+    process: asyncio.subprocess.Process, grace: float | None = None
+) -> None:
+    """Reap the trusted host and its group; grace applies only to shutdown."""
+    grace = _PROCESS_STOP_GRACE if grace is None else grace
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = asyncio.get_running_loop().time() + grace
+    # Process.wait() can wait for inherited stdout pipes even after direct exit.
+    # returncode is set by the child watcher independently of those pipes.
+    while process.returncode is None and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(min(0.02, max(0, deadline - asyncio.get_running_loop().time())))
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    await process.wait()
+
+
+async def _watch_process_host(process: asyncio.subprocess.Process) -> None:
+    while process.returncode is None:
+        await asyncio.sleep(0.02)
+    # Also handle unexpected host death: an inherited stdout descriptor must
+    # never keep the parent reader waiting after the lock holder has died.
+    await _stop_process_tree(process, grace=0)
+
+
+def _process_result(path: Path, host_code: int) -> int:
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(1025)
+        if len(raw) > 1024:
+            return 1
+        result = json.loads(raw)
+        code = result.get("exit_code") if isinstance(result, dict) else None
+        if isinstance(code, int) and not isinstance(code, bool) and -255 <= code <= 255:
+            return code
+    except (OSError, ValueError):
+        pass
+    # The supervisor normally kills itself after publishing the real CLI code.
+    # Missing or invalid results are failures, never successful delivery acks.
+    return host_code if host_code != 0 else 1
+
+
 async def run_agent(
     *,
     forum: Forum,
@@ -325,22 +356,42 @@ async def run_agent(
 
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{profile.name}.jsonl"
+    result_path = log_dir / f".execution-{uuid.uuid4().hex}.json"
+    spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+        sys.executable, "-I", str(Path(__file__).with_name("process_host.py").resolve()),
+        str(result_path.resolve()), "--", *invocation.argv,
+        cwd=invocation.cwd,
+        env=invocation.env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        start_new_session=True,
+        pass_fds=invocation.inherited_fds,
+    ))
     try:
-        process = await asyncio.create_subprocess_exec(
-            *invocation.argv,
-            cwd=invocation.cwd,
-            env=invocation.env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
+        process = await asyncio.shield(spawn)
+    except asyncio.CancelledError:
+        try:
+            process = await _settle(spawn)
+        except (OSError, ValueError):
+            process = None
+        if process is not None:
+            await _settle(asyncio.create_task(_stop_process_tree(process)))
+        current = forum.get_agent(agent["id"])
+        if current["process_state"] != ProcessState.RETIRED.value:
+            forum.set_process_state(agent["id"], ProcessState.FAILED, exit_code=130)
+        result_path.unlink(missing_ok=True)
+        result_path.with_suffix(".tmp").unlink(missing_ok=True)
+        raise
     except (FileNotFoundError, OSError) as error:
         forum.set_process_state(agent["id"], ProcessState.FAILED, exit_code=127)
-        log_path.write_text(f"launcher error: {error}\n", encoding="utf-8")
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(f"launcher error: {error}\n")
         return 127
 
-    forum.set_process_state(agent["id"], ProcessState.RUNNING, pid=process.pid)
     assert process.stdout is not None
+    watcher = asyncio.create_task(_watch_process_host(process))
     try:
+        forum.set_process_state(agent["id"], ProcessState.RUNNING, pid=process.pid)
         with log_path.open("ab") as log:
             # StreamReader's line iterator has a 64 KiB separator limit. Model JSONL
             # events can legitimately put a much larger tool result on one line, so
@@ -368,17 +419,27 @@ async def run_agent(
                         session_known = True
                     else:
                         scan_tail = scan[-1024:]
-        exit_code = await process.wait()
+        await watcher
+        exit_code = _process_result(result_path, await process.wait())
     except asyncio.CancelledError:
-        if process.returncode is None:
-            process.terminate()
-            await process.wait()
+        watcher.cancel()
+        await _settle(asyncio.gather(watcher, return_exceptions=True))
+        await _settle(asyncio.create_task(_stop_process_tree(process)))
         current = forum.get_agent(agent["id"])
         if current["process_state"] != ProcessState.RETIRED.value:
             forum.set_process_state(
                 agent["id"], ProcessState.FAILED, exit_code=process.returncode or 130
             )
         raise
+    except Exception:
+        watcher.cancel()
+        await _settle(asyncio.gather(watcher, return_exceptions=True))
+        await _settle(asyncio.create_task(_stop_process_tree(process)))
+        forum.set_process_state(agent["id"], ProcessState.FAILED, exit_code=1)
+        raise
+    finally:
+        result_path.unlink(missing_ok=True)
+        result_path.with_suffix(".tmp").unlink(missing_ok=True)
     current = forum.get_agent(agent["id"])
     if current["process_state"] != ProcessState.RETIRED.value:
         if provider_blocked:

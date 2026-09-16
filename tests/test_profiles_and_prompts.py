@@ -107,22 +107,19 @@ effort = "max"
         with self.assertRaises(ValueError):
             resolve_profiles(names=["missing"], specs=["openai:gpt-5.6-sol:high"])
 
-    def test_top_level_prompt_is_lean_and_exposes_only_peer_names(self) -> None:
+    def test_top_level_prompt_is_minimal_without_exposing_provider_settings(self) -> None:
         profile = AgentProfile("peer-one", Provider.OPENAI, "hidden-self-model", Effort.LOW)
         peer = AgentProfile("peer-two", Provider.ANTHROPIC, "hidden-peer-model", Effort.MAX)
         prompt = shared_prompt(
             name=profile.name,
             peer_names=(profile.name, peer.name),
         )
-        self.assertLess(len(prompt), 1_000)
+        self.assertLess(len(prompt.encode("utf-8")), 800)
         self.assertIn('"peer-one"', prompt)
-        self.assertIn('"peer-two"', prompt)
+        self.assertNotIn('"peer-two"', prompt)
         self.assertIn("forum --help", prompt)
-        self.assertIn("reply-trigger", prompt)
-        self.assertIn("@all", prompt)
-        self.assertIn("@human", prompt)
-        self.assertIn("forum retire", prompt)
-        self.assertIn("independent promising path", prompt)
+        self.assertIn("independent IDEA agent", prompt)
+        self.assertIn("your own judgment", prompt)
         self.assertNotIn(profile.model, prompt)
         self.assertNotIn(peer.model, prompt)
         self.assertNotIn(profile.provider.value, prompt)
@@ -134,7 +131,7 @@ effort = "max"
             name=defaults[0].name,
             peer_names=(peer.name for peer in defaults),
         )
-        self.assertLess(len(default_prompt), 1_000)
+        self.assertLess(len(default_prompt.encode("utf-8")), 800)
 
     def test_user_goal_is_sent_once_at_user_level(self) -> None:
         goal = "--inspect the parser for boundary bugs"

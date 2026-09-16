@@ -38,6 +38,8 @@ CSS = r"""
 html, body { height: 100%; }
 body {
   margin: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background:
     radial-gradient(1100px 520px at 88% -12%, #14263f66, transparent 62%),
@@ -54,6 +56,7 @@ a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 .topbar {
+  flex: 0 0 auto;
   min-height: 76px;
   display: flex;
   align-items: center;
@@ -122,11 +125,40 @@ a:hover { text-decoration: underline; }
 .logout-button:hover { border-color: var(--line-strong); color: var(--text); }
 
 .workspace-grid {
+  flex: 1;
   display: grid;
   grid-template-columns: 238px minmax(310px, 370px) minmax(0, 1fr);
-  height: calc(100dvh - 76px);
   min-height: 0;
 }
+.run-status {
+  flex: 0 0 auto;
+  padding: 9px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+.run-status-counts { display: flex; flex-wrap: wrap; gap: 5px 20px; color: var(--muted); font-size: 12px; }
+.run-status-link { padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font-size: inherit; }
+.run-status-link:hover { color: var(--blue); text-decoration: underline; }
+.run-status-reason { margin-top: 3px; color: var(--amber); font-size: 11px; }
+.coordination-list { display: grid; gap: 8px; }
+.coordination-card {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.coordination-card:hover { border-color: var(--line-strong); background: var(--panel-raised); }
+.coordination-card .peer-meta { display: block; margin-top: 5px; }
+.artifact-heading { margin-top: 20px; }
+.artifact-files { padding-left: 20px; overflow-wrap: anywhere; }
+.artifact-files li { margin: 5px 0; }
 .sidebar, .thread-column, .reader {
   min-width: 0;
   min-height: 0;
@@ -198,6 +230,14 @@ a:hover { text-decoration: underline; }
 .peer-name { overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .peer-meta { color: var(--faint); font-size: 11px; }
 .peer-reason { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.peer-participation { margin-top: 3px; color: var(--amber); font-size: 11px; }
+.peer-summary { margin: 5px 0; color: var(--muted); font-size: 11px; }
+.peer-help { color: var(--faint); }
+.peer-search { margin: 12px 0 7px; }
+.peer-search input { min-width: 0; width: 100%; }
+.peer-refresh, .peer-more { width: 100%; margin: 8px 0; }
+.comment-page-actions { display: flex; gap: 8px; margin: 14px 0; }
+.comment-context { color: var(--muted); font-size: 12px; }
 .run-link {
   display: block;
   margin: 2px -6px;
@@ -504,7 +544,14 @@ textarea { min-height: 92px; resize: vertical; }
   user-select: none;
 }
 .comment > .avatar { grid-row: 1; margin-top: 1px; }
-.comment-heading { align-self: center; min-width: 0; }
+.comment-heading {
+  display: flex;
+  align-self: center;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 4px 8px;
+}
 .comment-author { font-weight: 700; color: hsl(var(--avatar-hue, 210) 75% 76%); }
 .tag-author {
   padding: 0;
@@ -515,8 +562,38 @@ textarea { min-height: 92px; resize: vertical; }
   cursor: pointer;
 }
 .tag-author:hover { text-decoration: underline; }
-.comment-time { margin-left: 7px; color: var(--faint); font-size: 11px; }
+.comment-time { color: var(--faint); font-size: 11px; }
 .comment-body { grid-column: 2; margin-top: 8px; }
+.event-reference { margin-left: 8px; color: var(--muted); font-size: 11px; }
+.comment-heading > .event-reference { margin-left: 0; }
+.comment-heading > .reply-action {
+  margin-left: auto;
+  padding: 4px 10px;
+}
+.comment-references { grid-column: 2; min-width: 0; margin-top: 10px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.reference-links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.reference-links .event-reference { margin-left: 0; }
+.relation-label { color: var(--text); }
+.validation-report { margin: 8px 0 0; padding-left: 10px; border-left: 2px solid var(--line); white-space: pre-wrap; }
+.reply-target { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.reply-details { min-width: 0; padding: 8px 0; color: var(--muted); font-size: 12px; }
+.reply-details summary { cursor: pointer; }
+.reply-fields { display: grid; gap: 10px; margin-top: 12px; }
+.reply-fields label { display: grid; gap: 5px; }
+.reply-fields select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--text); background: var(--panel); }
+.reply-fields textarea { min-height: 80px; }
+.reply-fields p { margin: 0; }
+.investigation-section { margin: 20px 0; }
+.investigation-card { margin: 10px 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow-wrap: anywhere; }
+.investigation-card h3 { margin: 0 0 8px; font-size: 14px; }
+.investigation-card p { margin: 7px 0; white-space: pre-wrap; }
+.investigation-note { color: var(--muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.investigation-links { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.contribution-form { display: grid; gap: 10px; margin-top: 14px; }
+.contribution-form .reply-fields { margin-top: 0; }
+.member-row { padding: 9px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.approach-choice { display: grid; gap: 8px; }
+.approach-choice .search-form { grid-template-columns: minmax(0, 1fr) auto; }
 .mention-focus {
   outline: 2px solid #bd93f9;
   outline-offset: 4px;
@@ -617,7 +694,7 @@ textarea { min-height: 92px; resize: vertical; }
   .workspace-grid { grid-template-columns: 205px 320px minmax(0, 1fr); }
 }
 @media (max-width: 850px) {
-  body { height: auto; overflow: auto; }
+  body { display: block; height: auto; overflow: auto; }
   .topbar { position: sticky; top: 0; z-index: 5; min-height: 66px; }
   .goal { max-width: 70vw; }
   .workspace-grid { display: block; height: auto; }
@@ -627,6 +704,16 @@ textarea { min-height: 92px; resize: vertical; }
   .reader { min-height: 70vh; overflow: visible; }
   .reader-inner { padding-top: 24px; }
   .human-mentions { top: 76px; right: 10px; width: calc(100vw - 20px); }
+}
+@media (max-width: 600px) {
+  .topbar { flex-wrap: wrap; gap: 8px; padding: 12px 15px; }
+  .topbar > div:first-child { width: 100%; min-width: 0; }
+  .brand { flex-shrink: 0; }
+  .run-chip { min-width: 0; }
+  .goal { max-width: 100%; }
+  .topbar-actions { width: 100%; justify-content: space-between; }
+  .logout-button { white-space: nowrap; }
+  .human-mentions { top: 126px; }
 }
 """
 
@@ -680,12 +767,29 @@ JAVASCRIPT = r"""
     cursor: null,
     query: "",
     selected: urlState.searchParams.get("thread"),
+    selectedArtifact: urlState.searchParams.get("artifact"),
+    selectedApproach: urlState.searchParams.get("approach"),
+    selectedReport: urlState.searchParams.get("report"),
     highWater: initialHighWater,
     pending: 0,
     loadingList: false,
     listRequest: 0,
     threadRequest: 0,
-    peerFingerprint: "",
+    peerCursor: app.dataset.peerCursor || null,
+    peerVersion: app.dataset.peerVersion || "",
+    peerQuery: "",
+    peerRequest: 0,
+    loadingPeers: false,
+    currentThread: null,
+    approachCursor: null,
+    approachQuery: "",
+    approachRequest: 0,
+    callCursor: null,
+    artifactCursor: null,
+    boardVersion: null,
+    pendingBoardVersion: null,
+    boardRequest: 0,
+    boardLoading: false,
     peerNames: new Set(
       [...document.querySelectorAll(".peer-name")]
         .map((node) => node.textContent.trim().toLocaleLowerCase("en-US"))
@@ -719,16 +823,16 @@ JAVASCRIPT = r"""
       const token = `@${match[2]}`;
       const name = match[2].toLocaleLowerCase("en-US");
       let kind = "unknown";
-      let title = "등록된 peer와 일치하지 않는 멘션";
+      let title = "이 목록에 없는 peer 멘션 · 이름을 검색해 확인하세요.";
       if (name === "all") {
         kind = "all";
-        title = "모든 비활성 peer를 깨우는 @all 멘션";
+        title = "Resident peer에게 알림을 남깁니다. 실행 한도 안에서 순차 처리됩니다.";
       } else if (name === "human" || name === "user") {
         kind = "human";
         title = "웹 포럼 사용자를 향한 멘션";
       } else if (state.peerNames.has(name)) {
         kind = "peer";
-        title = `${token} peer를 깨우는 정확한 멘션`;
+        title = `${token} peer에게 알림을 남기는 정확한 멘션`;
       }
       const badge = make(
         "span",
@@ -1465,7 +1569,7 @@ JAVASCRIPT = r"""
       loadMore.hidden = !data.next_cursor;
       threadTotal.textContent = state.query ? `“${state.query}” 검색` : `${data.total_count}개`;
       document.getElementById("search-clear").hidden = !state.query;
-      if (!state.selected && data.items.length) {
+      if (!state.selected && !state.selectedArtifact && !state.selectedApproach && !state.selectedReport && data.items.length) {
         await selectThread(data.items[0].id, { updateHistory: true });
       } else if (state.selected) {
         markSelected();
@@ -1501,6 +1605,132 @@ JAVASCRIPT = r"""
     return row;
   };
 
+  const relationLabels = {
+    reply: "일반 답글", supports: "근거 보강", challenges: "반박",
+    verifies: "검증 보고", retracts: "본인 글 철회", supersedes: "본인 글 교체",
+  };
+
+  const eventReference = (reference, label) => {
+    if (!reference?.thread_id || !reference?.subject_id) return make("span", "event-reference", label);
+    const link = make("a", "event-reference", label);
+    const params = new URLSearchParams({ run: runId, thread: reference.thread_id, focus: reference.subject_id });
+    link.href = `/?${params}`;
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      selectThread(reference.thread_id, { updateHistory: true, focusSubjectId: reference.subject_id });
+    });
+    return link;
+  };
+
+  const chooseReplyTarget = (record) => {
+    const form = document.getElementById("reply-form");
+    if (!form || !record.event_id) return;
+    form.dataset.replyToEventId = String(record.event_id);
+    form.querySelector(".reply-target-label").textContent = record.id === state.currentThread?.id
+      ? `원글에 답글 · 이벤트 #${record.event_id}`
+      : `${record.author}의 댓글에 답글 · 이벤트 #${record.event_id}`;
+    form.querySelector("textarea[name=body]").focus();
+    form.scrollIntoView({ block: "nearest" });
+  };
+
+  const replyTargetButton = (record) => {
+    const button = make("button", "button quiet reply-action", "답글");
+    button.type = "button";
+    button.disabled = !record.event_id;
+    button.setAttribute("aria-label", `${record.author}의 ${record.thread_id ? "댓글" : "원글"}에 답글`);
+    button.addEventListener("click", () => chooseReplyTarget(record));
+    return button;
+  };
+
+  const commentReferences = (comment) => {
+    const metadata = comment.provenance;
+    if (!metadata) return null;
+    const block = make("div", "comment-references");
+    const links = make("div", "reference-links");
+    links.append(make("span", "relation-label", relationLabels[metadata.relation] || "일반 답글"));
+    if (metadata.reply_to_event_id) {
+      links.append(eventReference(metadata.reply_to_event, `대상 #${metadata.reply_to_event_id}`));
+    }
+    for (const reference of metadata.evidence_events || []) {
+      links.append(eventReference(reference, `근거 #${reference.event_id}`));
+    }
+    if (metadata.artifact_id) {
+      const artifact = make("a", "event-reference", "참조 결과물");
+      artifact.href = `/?run=${encodedRun}&artifact=${encodeURIComponent(metadata.artifact_id)}`;
+      artifact.addEventListener("click", (event) => {
+        event.preventDefault();
+        selectArtifact(metadata.artifact_id);
+      });
+      links.append(artifact);
+    }
+    block.append(links);
+    if (metadata.validation) {
+      block.append(make("div", "validation-report", `${comment.author}의 검증 보고\n${metadata.validation}`));
+    }
+    return block;
+  };
+
+  const commentNode = (comment) => {
+    const node = make("article", "comment");
+    node.dataset.subjectId = comment.id;
+    node.style.setProperty("--avatar-hue", String(authorHue(comment.author)));
+    const heading = make("div", "comment-heading");
+    heading.append(authorTagButton(comment.author, "comment-author"));
+    heading.append(make("span", "comment-time", timeText(comment.created_at)));
+    if (comment.event_id) heading.append(eventReference(
+      { thread_id: comment.thread_id, subject_id: comment.id }, `#${comment.event_id}`
+    ));
+    heading.append(replyTargetButton(comment));
+    const avatar = avatarNode(comment.author);
+    avatar.style.cursor = "pointer";
+    avatar.title = `클릭하면 @${comment.author} 태그`;
+    avatar.addEventListener("click", () => tagIntoComposer(`@${comment.author}`));
+    node.append(avatar, heading);
+    const reported = comment.report || comment.exchange?.source_report;
+    if (reported) {
+      const contribution = make("div", "comment-body");
+      if (comment.exchange) {
+        contribution.append(make("p", "investigation-note", "다른 접근법에서 가져온 중간 성과"));
+        contribution.append(make("p", "investigation-note", `적용 메모: ${comment.exchange.application}`));
+      }
+      contribution.append(reportCard(reported));
+      const original = make("details", "reply-details");
+      original.append(make("summary", "", "원문 전체"), markdownText("div", "", comment.body));
+      contribution.append(original);
+      node.append(contribution);
+    } else node.append(markdownText("div", "comment-body", comment.body));
+    const references = commentReferences(comment);
+    if (references) node.append(references);
+    return node;
+  };
+
+  const loadComments = async (thread, button, container) => {
+    if (button.disabled || !thread.comments_next_cursor) return;
+    button.disabled = true;
+    const requestNumber = state.threadRequest;
+    try {
+      const params = new URLSearchParams({ limit: "30", after: thread.comments_next_cursor });
+      const page = await request(`/api/threads/${encodeURIComponent(thread.id)}/comments?${params}`);
+      if (requestNumber !== state.threadRequest) return;
+      for (const comment of page.items) {
+        if (thread.comments.some((existing) => existing.id === comment.id)) continue;
+        thread.comments.push(comment);
+        container.append(commentNode(comment));
+        if (thread.focus_comment?.id === comment.id) {
+          reader.querySelector(".focused-comment")?.remove();
+          thread.focus_comment = null;
+        }
+      }
+      thread.comments_next_cursor = page.next_cursor;
+      button.hidden = !page.next_cursor;
+      button.textContent = `다음 댓글 더 보기 · ${thread.comments.length}개 읽음`;
+    } catch (error) {
+      showToast(`댓글을 가져오지 못했습니다: ${error.message}`);
+    } finally {
+      button.disabled = false;
+    }
+  };
+
   const renderThread = (thread, { preserveScroll = false, scrollToBottom = false } = {}) => {
     const previousScroll = reader.scrollTop;
     const inner = make("article", "reader-inner");
@@ -1509,6 +1739,10 @@ JAVASCRIPT = r"""
     const postMeta = make("div", "post-meta");
     postMeta.append(authorTagButton(thread.author, "card-author"));
     postMeta.append(document.createTextNode(` · ${timeText(thread.created_at)} · ${thread.id}`));
+    if (thread.event_id) postMeta.append(eventReference(
+      { thread_id: thread.id, subject_id: thread.id }, `#${thread.event_id}`
+    ));
+    postMeta.append(replyTargetButton(thread));
     inner.append(postMeta);
     const postBody = markdownText("div", "post-body", thread.body);
     postBody.dataset.subjectId = thread.id;
@@ -1521,25 +1755,39 @@ JAVASCRIPT = r"""
       inner.append(block);
     }
 
-    inner.append(make("h2", "comments-heading", `댓글 ${thread.comments.length}`));
+    const investigation = make("section", "investigation-section");
+    investigation.setAttribute("aria-label", "이 논의의 접근법과 중간 성과");
+    inner.append(investigation);
+    loadThreadInvestigations(thread, investigation);
+
+    inner.append(make("h2", "comments-heading", `댓글 ${thread.comment_count ?? thread.comments.length}`));
     if (!thread.comments.length) inner.append(make("div", "empty", "아직 댓글이 없습니다."));
-    for (const comment of thread.comments) {
-      const node = make("article", "comment");
-      node.dataset.subjectId = comment.id;
-      node.style.setProperty("--avatar-hue", String(authorHue(comment.author)));
-      const heading = make("div", "comment-heading");
-      heading.append(authorTagButton(comment.author, "comment-author"));
-      heading.append(make("span", "comment-time", timeText(comment.created_at)));
-      const avatar = avatarNode(comment.author);
-      avatar.style.cursor = "pointer";
-      avatar.title = `클릭하면 @${comment.author} 태그`;
-      avatar.addEventListener("click", () => tagIntoComposer(`@${comment.author}`));
-      node.append(avatar, heading, markdownText("div", "comment-body", comment.body));
-      inner.append(node);
+    const comments = make("section", "comment-list");
+    for (const comment of thread.comments) comments.append(commentNode(comment));
+    inner.append(comments);
+    const commentActions = make("div", "comment-page-actions");
+    const moreComments = make("button", "button quiet", "다음 댓글 더 보기");
+    moreComments.type = "button";
+    moreComments.hidden = !thread.comments_next_cursor;
+    moreComments.addEventListener("click", () => loadComments(thread, moreComments, comments));
+    commentActions.append(moreComments);
+    inner.append(commentActions);
+    if (thread.focus_comment) {
+      const focus = make("section", "focused-comment");
+      focus.append(make("p", "comment-context", "선택한 댓글 · 앞선 댓글은 더 보기로 읽을 수 있습니다."));
+      focus.append(commentNode(thread.focus_comment));
+      inner.append(focus);
     }
 
     const form = make("form", "reply-form");
     form.id = "reply-form";
+    form.dataset.replyToEventId = thread.event_id ? String(thread.event_id) : "";
+    const target = make("div", "reply-target");
+    target.append(make("span", "reply-target-label", `원글에 답글${thread.event_id ? ` · 이벤트 #${thread.event_id}` : ""}`));
+    const resetTarget = make("button", "button quiet", "원글로 변경");
+    resetTarget.type = "button";
+    resetTarget.addEventListener("click", () => chooseReplyTarget(thread));
+    target.append(resetTarget);
     const author = make("input");
     author.name = "author";
     author.value = "human";
@@ -1547,24 +1795,80 @@ JAVASCRIPT = r"""
     const body = make("textarea");
     body.name = "body";
     body.required = true;
-    body.placeholder = "이 글에 답변… 멘션 없이는 호출하지 않고 저장됩니다.";
+    body.placeholder = "이 글에 답변… 구독자에게 알림이 전달됩니다. 특정 동료는 @이름";
     body.setAttribute("aria-label", "댓글 내용");
+    const details = make("details", "reply-details");
+    details.append(make("summary", "", "관계·근거 추가 (선택)"));
+    const fields = make("div", "reply-fields");
+    const field = (label, input) => {
+      const wrapper = make("label", "", label);
+      wrapper.append(input);
+      fields.append(wrapper);
+      return input;
+    };
+    const relation = make("select");
+    relation.name = "relation";
+    for (const [value, label] of Object.entries(relationLabels)) {
+      const option = make("option", "", label);
+      option.value = value;
+      relation.append(option);
+    }
+    field("대상과의 관계", relation);
+    const artifact = field("참조 결과물 ID", make("input"));
+    artifact.name = "artifact_id";
+    artifact.placeholder = "artifact_…";
+    const evidence = field("근거 이벤트 번호 (쉼표로 구분, 최대 16개)", make("input"));
+    evidence.name = "evidence_event_ids";
+    evidence.placeholder = "12, 18";
+    evidence.pattern = "[0-9]+(?:\\s*,\\s*[0-9]+)*";
+    const validation = field("작성자가 보고하는 검증 내용", make("textarea"));
+    validation.name = "validation";
+    validation.placeholder = "실행한 확인 방법과 결과, 남은 한계";
+    relation.addEventListener("change", () => {
+      validation.required = relation.value === "verifies";
+      validation.setCustomValidity("");
+    });
+    validation.addEventListener("input", () => validation.setCustomValidity(""));
+    fields.append(make("p", "", "관계와 검증은 작성자의 보고입니다. 철회·교체는 원작성자만 할 수 있습니다."));
+    details.append(fields);
+    form.addEventListener("invalid", (event) => {
+      if (details.contains(event.target)) details.open = true;
+    }, true);
     const actions = make("div", "reply-actions");
     const submit = make("button", "button primary", "댓글 작성");
     submit.type = "submit";
     actions.append(submit);
-    form.append(author, body, actions);
+    form.append(target, author, body, details, actions);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (relation.value === "verifies" && !validation.value.trim()) {
+        details.open = true;
+        validation.setCustomValidity("검증 방법과 결과를 입력하세요.");
+        validation.reportValidity();
+        return;
+      }
+      const evidenceIds = evidence.value.trim() ? evidence.value.split(",").map((value) => Number(value.trim())) : [];
+      if (evidenceIds.length > 16 || evidenceIds.some((value) => !Number.isSafeInteger(value) || value < 1)) {
+        details.open = true;
+        showToast("근거 이벤트는 양의 정수로 최대 16개 입력하세요.");
+        return;
+      }
       submit.disabled = true;
       try {
         const item = await request(`/api/threads/${encodeURIComponent(thread.id)}/comments`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ author: author.value || "human", body: body.value }),
+          body: JSON.stringify({
+            author: author.value || "human", body: body.value,
+            reply_to_event_id: form.dataset.replyToEventId ? Number(form.dataset.replyToEventId) : null,
+            relation: relation.value, artifact_id: artifact.value.trim() || null,
+            validation: validation.value, evidence_event_ids: evidenceIds,
+          }),
         });
         state.highWater = Math.max(state.highWater, Number(item.activity_high_water || 0));
-        await selectThread(thread.id, { updateHistory: false, scrollToBottom: true });
+        await selectThread(thread.id, {
+          updateHistory: false, scrollToBottom: true, focusSubjectId: item.id,
+        });
         showToast("댓글을 작성했습니다.");
       } catch (error) {
         showToast(`댓글 작성 실패: ${error.message}`);
@@ -1583,18 +1887,33 @@ JAVASCRIPT = r"""
   const selectThread = async (threadId, options = {}) => {
     const requestNumber = ++state.threadRequest;
     state.selected = threadId;
+    state.selectedArtifact = null;
+    state.selectedApproach = null;
+    state.selectedReport = null;
     markSelected();
     if (options.updateHistory) {
       const next = new URL(window.location.href);
       next.searchParams.set("thread", threadId);
+      next.searchParams.delete("artifact");
+      next.searchParams.delete("approach");
+      next.searchParams.delete("report");
+      if (options.focusSubjectId) next.searchParams.set("focus", options.focusSubjectId);
+      else next.searchParams.delete("focus");
       window.history.pushState({ thread: threadId }, "", next);
     }
     if (!options.preserveScroll) {
       reader.replaceChildren(make("div", "reader-empty", "글 불러오는 중…"));
     }
     try {
-      const thread = await request(`/api/threads/${encodeURIComponent(threadId)}`);
+      const thread = await request(`/api/threads/${encodeURIComponent(threadId)}?comments_limit=30`);
+      if (options.focusSubjectId && options.focusSubjectId.startsWith("comment_")
+          && !thread.comments.some((comment) => comment.id === options.focusSubjectId)) {
+        thread.focus_comment = await request(
+          `/api/threads/${encodeURIComponent(threadId)}/comments/${encodeURIComponent(options.focusSubjectId)}`
+        );
+      }
       if (requestNumber !== state.threadRequest) return;
+      state.currentThread = thread;
       renderThread(thread, options);
       if (options.focusSubjectId) {
         let focusTarget = null;
@@ -1621,18 +1940,11 @@ JAVASCRIPT = r"""
     }
   };
 
-  const renderPeers = (agents) => {
-    state.peerNames = new Set(
-      agents.map((agent) => agent.name.toLocaleLowerCase("en-US"))
-    );
-    const fingerprint = JSON.stringify(agents.map((agent) => [
-      agent.name, agent.process_state, agent.model, agent.effort, agent.retire_reason
-    ]));
-    if (fingerprint === state.peerFingerprint) return;
-    state.peerFingerprint = fingerprint;
+  const renderPeers = (agents, append = false) => {
     const list = document.getElementById("peer-list");
-    list.replaceChildren();
+    if (!append) list.replaceChildren();
     for (const agent of agents) {
+      state.peerNames.add(agent.name.toLocaleLowerCase("en-US"));
       const row = make("div", "peer");
       row.dataset.peerName = agent.name;
       row.title = `클릭하면 @${agent.name} 태그`;
@@ -1642,11 +1954,564 @@ JAVASCRIPT = r"""
       peerName.style.color = `hsl(${authorHue(agent.name)} 60% 74%)`;
       text.append(peerName);
       text.append(make("div", "peer-meta", `${agent.model} · ${agent.effort} · ${agent.process_state}`));
+      if (agent.participation_state === "parked" && agent.process_state !== "retired") {
+        const participation = make("div", "peer-participation", "Parked · 유휴 보존");
+        participation.title = "세션과 작업 사본을 보존한 유휴 상태";
+        text.append(participation);
+      }
       if (agent.retire_reason) text.append(make("div", "peer-reason", agent.retire_reason));
       row.append(text);
       list.append(row);
     }
-    if (!agents.length) list.append(make("div", "empty", "등록된 에이전트가 없습니다."));
+    if (!append && !agents.length) {
+      list.append(make("div", "empty", state.peerQuery ? "일치하는 동료가 없습니다." : "등록된 에이전트가 없습니다."));
+    }
+  };
+
+  const renderPeerSummary = (summary) => {
+    document.getElementById("peer-total").textContent = `Peers ${summary.total_count}`;
+    document.getElementById("peer-participation").textContent =
+      `Resident ${summary.resident_count || 0} · Parked ${summary.parked_count || 0}`;
+    document.getElementById("peer-states").textContent =
+      `Running ${summary.states.running || 0} · Dormant ${summary.states.dormant || 0}`;
+    document.getElementById("peer-refresh").hidden = summary.version === state.peerVersion;
+  };
+
+  const loadPeers = async ({ reset = false } = {}) => {
+    if (state.loadingPeers && !reset) return;
+    const requestNumber = ++state.peerRequest;
+    state.loadingPeers = true;
+    const more = document.getElementById("peer-load-more");
+    more.disabled = true;
+    const params = new URLSearchParams({ limit: "30", q: state.peerQuery });
+    if (!reset && state.peerCursor) params.set("after", state.peerCursor);
+    try {
+      const data = await request(`/api/runs/${encodedRun}/agents?${params}`);
+      if (requestNumber !== state.peerRequest) return;
+      renderPeers(data.items, !reset);
+      state.peerCursor = data.next_cursor;
+      // Only a full refresh makes all currently visible peer states current.
+      if (reset) state.peerVersion = data.summary.version;
+      more.hidden = !data.next_cursor;
+      renderPeerSummary(data.summary);
+    } catch (error) {
+      showToast(`동료 목록을 가져오지 못했습니다: ${error.message}`);
+    } finally {
+      if (requestNumber === state.peerRequest) {
+        state.loadingPeers = false;
+        more.disabled = false;
+      }
+    }
+  };
+
+  const discussionLink = (kind, id, label) => {
+    const link = make("a", "", label);
+    link.href = `/?run=${encodedRun}&${kind}=${encodeURIComponent(id)}`;
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (kind === "thread") selectThread(id, { updateHistory: true });
+      else selectInvestigation(kind, id);
+    });
+    return link;
+  };
+
+  const originalLinks = (events, label) => {
+    const links = make("div", "investigation-links");
+    for (const event of events || []) links.append(eventReference(event, `${label} #${event.event_id}`));
+    return links;
+  };
+
+  const reportCard = (item) => {
+    const card = make("article", "investigation-card");
+    const heading = make("h3");
+    heading.append(discussionLink("report", item.id, item.summary));
+    card.append(heading, make("div", "investigation-note", `${item.author} · ${timeText(item.created_at)}${item.is_superseded ? " · 후속 보고 있음" : ""}`));
+    card.append(make("p", "investigation-note", `적용 조건: ${item.conditions}`));
+    if (item.open_questions) card.append(make("p", "investigation-note", `남은 질문: ${item.open_questions}`));
+    if (item.content_truncated) card.append(make("p", "investigation-note", "일부 내용 미리보기 · 제목을 눌러 전체 보기"));
+    if (item.source_changes?.total_count) {
+      const changed = make("p", "investigation-note");
+      changed.append(discussionLink("report", item.id, `근거에 반박·철회·대체 ${item.source_changes.total_count}건 · 상세에서 확인`));
+      card.append(changed);
+    }
+    card.append(originalLinks(item.source_events, "원본"));
+    return card;
+  };
+
+  const approachCard = (item) => {
+    const card = make("article", "investigation-card");
+    const heading = make("h3");
+    heading.append(discussionLink("approach", item.id, item.hypothesis));
+    card.append(heading, make("p", "investigation-note", `다음 확인: ${item.next_check}`));
+    card.append(make("div", "investigation-note", `참여 ${item.member_count || 0}명 · Running ${item.running_members || 0} · Parked ${item.parked_members || 0}`));
+    if (item.hypothesis_truncated || item.next_check_truncated) card.append(make("p", "investigation-note", "일부 내용 미리보기 · 가설을 눌러 전체 보기"));
+    return card;
+  };
+
+  const pagedSection = (container, path, parameters, render, emptyText, moreText) => {
+    const list = make("div");
+    const more = make("button", "button quiet", moreText);
+    more.type = "button";
+    more.hidden = true;
+    container.append(list, more);
+    let cursor = null;
+    let loading = false;
+    const load = async () => {
+      if (loading) return;
+      loading = true;
+      more.disabled = true;
+      try {
+        const query = new URLSearchParams(parameters);
+        if (cursor) query.set("after", cursor);
+        const page = await request(`${path}?${query}`);
+        if (!container.isConnected) return;
+        if (!cursor && !page.items.length) list.append(make("p", "investigation-note", emptyText));
+        for (const item of page.items) list.append(render(item));
+        cursor = page.next_cursor;
+        more.hidden = !cursor;
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        loading = false;
+        more.disabled = false;
+      }
+    };
+    more.addEventListener("click", load);
+    return load;
+  };
+
+  const eventIds = (value) => {
+    if (!value.trim()) return [];
+    const ids = value.split(",").map((item) => Number(item.trim()));
+    if (ids.length > 16 || ids.some((id) => !Number.isSafeInteger(id) || id < 1)) {
+      throw new Error("이벤트 번호는 양의 정수로 최대 16개 입력하세요.");
+    }
+    return ids;
+  };
+
+  const contributionForm = (title, definitions, submitText, onSubmit) => {
+    const details = make("details", "reply-details");
+    details.append(make("summary", "", title));
+    const form = make("form", "contribution-form");
+    const fields = make("div", "reply-fields");
+    const inputs = {};
+    for (const [name, label, required, multiline] of definitions) {
+      const wrapper = make("label", "", `${label}${required ? " *" : ""}`);
+      const input = make(multiline ? "textarea" : "input");
+      input.name = name;
+      input.required = Boolean(required);
+      wrapper.append(input);
+      fields.append(wrapper);
+      inputs[name] = input;
+    }
+    const submit = make("button", "button primary", submitText);
+    submit.type = "submit";
+    form.append(fields, make("p", "investigation-note", "human으로 기록합니다. * 필수 입력"), submit);
+    form.addEventListener("invalid", () => { details.open = true; }, true);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      submit.disabled = true;
+      try {
+        const values = Object.fromEntries(Object.entries(inputs).map(([name, input]) => [name, input.value.trim()]));
+        await onSubmit(values);
+      } catch (error) {
+        showToast(`기록하지 못했습니다: ${error.message}`);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    details.append(form);
+    return { details, fields, form, inputs, submit };
+  };
+
+  const writeContribution = async (path, values) => {
+    const item = await request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+    state.highWater = Math.max(state.highWater, Number(item.activity_high_water || 0));
+    loadApproaches({ reset: true });
+    loadThreads({ reset: true });
+    return item;
+  };
+
+  const loadThreadInvestigations = async (thread, container) => {
+    try {
+      const page = await request(`/api/runs/${encodedRun}/approaches?${new URLSearchParams({ thread: thread.id, limit: "5" })}`);
+      if (!container.isConnected) return;
+      if (page.items.length) {
+        container.append(make("h2", "section-title", "접근법"));
+        for (const item of page.items) container.append(approachCard(item));
+        container.append(make("h2", "section-title", "중간 성과"));
+        const reports = make("div");
+        container.append(reports);
+        pagedSection(reports, `/api/runs/${encodedRun}/reports`, { thread: thread.id, limit: "3" }, reportCard,
+          "아직 중간 성과가 없습니다. 접근법에서 근거를 포함해 기록할 수 있습니다.", "중간 성과 더 보기")();
+      } else {
+        const creation = contributionForm("접근법 기록 (선택)", [
+          ["hypothesis", "검토할 가설", true, true], ["next_check", "다음 확인", true, true], ["parent_id", "관련 상위 접근법 ID", false, false],
+        ], "접근법 기록", async (values) => {
+          const item = await writeContribution(`/api/runs/${encodedRun}/approaches`, { ...values, parent_id: values.parent_id || null, thread_id: thread.id });
+          await selectInvestigation("approach", item.id);
+          showToast("접근법을 기록했습니다.");
+        });
+        container.append(creation.details);
+      }
+    } catch (error) {
+      if (container.isConnected) container.append(make("p", "investigation-note", `접근법을 불러오지 못했습니다: ${error.message}`));
+    }
+  };
+
+  const loadApproaches = async ({ reset = false } = {}) => {
+    const requestNumber = ++state.approachRequest;
+    const more = document.getElementById("approach-more");
+    const list = document.getElementById("approach-list");
+    more.disabled = true;
+    try {
+      const query = new URLSearchParams({ q: state.approachQuery, limit: "5" });
+      if (!reset && state.approachCursor) query.set("after", state.approachCursor);
+      const page = await request(`/api/runs/${encodedRun}/approaches?${query}`);
+      if (requestNumber !== state.approachRequest) return;
+      if (reset) list.replaceChildren();
+      if (!page.items.length && reset) list.append(make("p", "investigation-note", "일치하는 접근법이 없습니다."));
+      for (const item of page.items) {
+        const link = discussionLink("approach", item.id, item.hypothesis);
+        link.className = "coordination-card";
+        link.append(make("span", "peer-meta", `참여 ${item.member_count || 0}명 · ${item.thread_title || "논의"}`));
+        list.append(link);
+      }
+      state.approachCursor = page.next_cursor;
+      more.hidden = !page.next_cursor;
+    } catch (error) {
+      showToast(`접근법 목록 오류: ${error.message}`);
+    } finally {
+      if (requestNumber === state.approachRequest) more.disabled = false;
+    }
+  };
+
+  const addReportForm = (inner, approach) => {
+    const contribution = contributionForm("중간 성과 기록 (선택)", [
+      ["summary", "중간 결론", true, true], ["conditions", "적용 조건과 한계", true, true],
+      ["open_questions", "남은 질문", false, true], ["source_event_ids", "원본 근거 이벤트 번호 (쉼표로 구분)", true, false],
+      ["artifact_id", "참조 결과물 ID", false, false], ["validation_event_ids", "검증 보고 이벤트 번호 (쉼표로 구분)", false, false],
+      ["supersedes_report_id", "교체할 본인 보고서 ID", false, false],
+    ], "중간 성과 기록", async (values) => {
+      const item = await writeContribution(`/api/runs/${encodedRun}/approaches/${encodeURIComponent(approach.id)}/reports`, {
+        ...values, source_event_ids: eventIds(values.source_event_ids), validation_event_ids: eventIds(values.validation_event_ids),
+        artifact_id: values.artifact_id || null, supersedes_report_id: values.supersedes_report_id || null,
+      });
+      await selectInvestigation("report", item.id);
+      showToast("근거와 함께 중간 성과를 기록했습니다.");
+    });
+    contribution.fields.append(make("p", "investigation-note", "이벤트 번호는 각각 최대 16개입니다. 원본 근거 중 하나는 이 논의의 이벤트여야 합니다. 검증 보고는 기존 ‘검증 보고’ 답글을 참조하며, 결과물을 지정하면 같은 결과물의 검증이어야 합니다."));
+    inner.append(contribution.details);
+  };
+
+  const addAdoptionForm = (inner, report) => {
+    const contribution = contributionForm("다른 접근법에 가져가기 (선택)", [["application", "해당 접근법에 적용할 방법과 조건", true, true]], "근거와 함께 가져가기", async (values) => {
+      const exchange = await writeContribution(`/api/runs/${encodedRun}/reports/${encodeURIComponent(report.id)}/adoptions`, {
+        application: values.application, target_approach_id: target.value,
+      });
+      await selectThread(exchange.thread_id, { updateHistory: true, focusSubjectId: exchange.comment_id });
+      showToast("원본 보고서와 적용 이유를 대상 논의에 남겼습니다.");
+    });
+    const choices = make("div", "approach-choice");
+    const search = make("div", "search-form");
+    const query = make("input");
+    query.type = "search";
+    query.placeholder = "대상 접근법 검색";
+    query.setAttribute("aria-label", "가져갈 접근법 검색");
+    const searchButton = make("button", "button", "찾기");
+    searchButton.type = "button";
+    search.append(query, searchButton);
+    const label = make("label", "", "대상 접근법 *");
+    const target = make("select");
+    target.required = true;
+    target.setAttribute("aria-label", "대상 접근법");
+    const placeholder = () => { const option = make("option", "", "대상 접근법 선택"); option.value = ""; return option; };
+    target.append(placeholder());
+    label.append(target);
+    const more = make("button", "button quiet", "대상 더 보기");
+    more.type = "button";
+    more.hidden = true;
+    choices.append(search, label, more);
+    contribution.fields.prepend(choices);
+    let cursor = null;
+    let searchVersion = 0;
+    let loaded = false;
+    const load = async (reset = false) => {
+      const version = ++searchVersion;
+      searchButton.disabled = true;
+      more.disabled = true;
+      try {
+        const params = new URLSearchParams({ q: query.value.trim(), limit: "10" });
+        if (!reset && cursor) params.set("after", cursor);
+        const page = await request(`/api/runs/${encodedRun}/approaches?${params}`);
+        if (version !== searchVersion || !contribution.details.isConnected) return;
+        if (reset) target.replaceChildren(placeholder());
+        for (const item of page.items) {
+          if (item.id === report.approach_id) continue;
+          const option = make("option", "", item.hypothesis);
+          option.value = item.id;
+          target.append(option);
+        }
+        cursor = page.next_cursor;
+        more.hidden = !cursor;
+        loaded = true;
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        if (version === searchVersion) { searchButton.disabled = false; more.disabled = false; }
+      }
+    };
+    contribution.details.addEventListener("toggle", () => { if (contribution.details.open && !loaded) load(true); });
+    searchButton.addEventListener("click", () => load(true));
+    more.addEventListener("click", () => load());
+    query.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); load(true); } });
+    inner.append(contribution.details);
+  };
+
+  const selectInvestigation = async (kind, id, { updateHistory = true } = {}) => {
+    const requestNumber = ++state.threadRequest;
+    state.selected = null;
+    state.selectedArtifact = null;
+    state.selectedApproach = kind === "approach" ? id : null;
+    state.selectedReport = kind === "report" ? id : null;
+    state.currentThread = null;
+    markSelected();
+    if (updateHistory) {
+      const next = new URL(window.location.href);
+      for (const key of ["thread", "focus", "artifact", "approach", "report"]) next.searchParams.delete(key);
+      next.searchParams.set(kind, id);
+      window.history.pushState({ [kind]: id }, "", next);
+    }
+    reader.replaceChildren(make("div", "reader-empty", "논의 정보 불러오는 중…"));
+    try {
+      const item = await request(`/api/runs/${encodedRun}/${kind === "approach" ? "approaches" : "reports"}/${encodeURIComponent(id)}`);
+      if (requestNumber !== state.threadRequest) return;
+      const inner = make("article", "reader-inner");
+      inner.dataset.testid = `${kind}-reader`;
+      inner.append(make("h1", "thread-heading", kind === "approach" ? item.hypothesis : item.summary));
+      inner.append(make("p", "investigation-note", `${item.author} · ${timeText(item.created_at)} · ${item.id}`));
+      inner.append(discussionLink("thread", item.thread_id, "원래 논의 열기"));
+      if (kind === "approach") {
+        inner.append(make("h2", "comments-heading", "다음 확인"), make("p", "investigation-note", item.next_check));
+        if (item.parent_id) inner.append(discussionLink("approach", item.parent_id, "관련 상위 접근법"));
+        inner.append(make("h2", "comments-heading", `자율 참여 ${item.member_count || 0}명`));
+        inner.append(make("p", "investigation-note", "참여자는 자신의 초점을 정해 합류합니다."));
+        const members = make("div");
+        inner.append(members);
+        const loadMembers = pagedSection(members, `/api/runs/${encodedRun}/approaches/${encodeURIComponent(id)}/members`, { limit: "10" }, (member) => {
+          const row = make("div", "member-row");
+          row.append(make("strong", "", member.name || member.agent_name || member.agent_id));
+          row.append(make("p", "investigation-note", member.focus || "참여 중"));
+          if (member.process_state) row.append(make("span", "investigation-note", `${member.process_state}${member.participation_state === "parked" ? " · Parked" : ""}`));
+          return row;
+        }, "아직 합류한 참여자가 없습니다.", "참여자 더 보기");
+        inner.append(make("h2", "comments-heading", "중간 성과"));
+        const reports = make("div");
+        inner.append(reports);
+        const loadReports = pagedSection(reports, `/api/runs/${encodedRun}/reports`, { approach: id, limit: "5" }, reportCard,
+          "아직 기록된 중간 성과가 없습니다.", "중간 성과 더 보기");
+        addReportForm(inner, item);
+        reader.replaceChildren(inner);
+        loadMembers();
+        loadReports();
+      } else {
+        inner.append(make("p", "investigation-note", "작성자가 보고한 중간 성과입니다. 원본과 적용 조건을 함께 확인하세요."));
+        inner.append(discussionLink("approach", item.approach_id, "이 성과의 접근법"));
+        for (const [label, value] of [["적용 조건과 한계", item.conditions], ["남은 질문", item.open_questions || "기록된 질문 없음"]]) {
+          inner.append(make("h2", "comments-heading", label), make("p", "investigation-note", value));
+        }
+        inner.append(make("h2", "comments-heading", "원본 근거"), originalLinks(item.source_events, "원본"));
+        if (item.validation_events?.length) inner.append(make("h2", "comments-heading", "작성자의 검증 보고"), originalLinks(item.validation_events, "검증 보고"));
+        if (item.artifact_id) {
+          const artifact = make("a", "", "참조 결과물 열기");
+          artifact.href = `/?run=${encodedRun}&artifact=${encodeURIComponent(item.artifact_id)}`;
+          artifact.addEventListener("click", (event) => { event.preventDefault(); selectArtifact(item.artifact_id); });
+          inner.append(make("p", ""));
+          inner.append(artifact);
+        }
+        if (item.source_changes?.total_count) {
+          inner.append(make("h2", "comments-heading", `근거의 후속 관계 ${item.source_changes.total_count}건`));
+          inner.append(make("p", "investigation-note", "원본에 후속 의견이 있습니다. 보고서의 적용 가능성을 다시 확인하세요."));
+          inner.append(originalLinks(item.source_changes.items, "후속"));
+        }
+        if (item.supersedes_report_id) inner.append(discussionLink("report", item.supersedes_report_id, "이전 보고서"));
+        if (item.is_superseded) {
+          inner.append(make("p", "investigation-note", "후속 보고서가 있습니다."));
+          for (const next of item.superseded_by?.items || []) inner.append(discussionLink("report", next.id, next.summary || "후속 보고서 열기"));
+        }
+        addAdoptionForm(inner, item);
+        reader.replaceChildren(inner);
+      }
+      reader.scrollTop = 0;
+    } catch (error) {
+      if (requestNumber === state.threadRequest) reader.replaceChildren(make("div", "reader-empty", `논의 정보를 불러오지 못했습니다: ${error.message}`));
+    }
+  };
+
+  const selectArtifact = async (artifactId, { updateHistory = true } = {}) => {
+    const requestNumber = ++state.threadRequest;
+    state.selected = null;
+    state.selectedArtifact = artifactId;
+    state.selectedApproach = null;
+    state.selectedReport = null;
+    state.currentThread = null;
+    markSelected();
+    if (updateHistory) {
+      const next = new URL(window.location.href);
+      next.searchParams.delete("thread");
+      next.searchParams.delete("focus");
+      next.searchParams.delete("approach");
+      next.searchParams.delete("report");
+      next.searchParams.set("artifact", artifactId);
+      window.history.pushState({ artifact: artifactId }, "", next);
+    }
+    reader.replaceChildren(make("div", "reader-empty", "결과물 정보 불러오는 중…"));
+    try {
+      const item = await request(`/api/runs/${encodedRun}/artifacts/${encodeURIComponent(artifactId)}`);
+      if (requestNumber !== state.threadRequest) return;
+      const inner = make("article", "reader-inner");
+      inner.dataset.testid = "artifact-reader";
+      const title = item.note ? String(item.note).split("\n")[0].slice(0, 120) : "공유된 변경 사항";
+      inner.append(make("h1", "thread-heading", title));
+      const metadata = make("div", "post-meta");
+      metadata.append(authorChip(item.author));
+      metadata.append(document.createTextNode(` · ${timeText(item.created_at)} · ${item.integrated_at ? "적용됨" : "게시됨"}`));
+      inner.append(metadata);
+      inner.append(make("p", "workspace-path", `${item.id} · 기준 ${item.base_revision}`));
+      if (item.note && item.note !== title) inner.append(markdownText("div", "post-body", item.note));
+      inner.append(make("h2", "comments-heading", `변경 파일 ${item.file_count}개`));
+      const files = make("ul", "artifact-files");
+      for (const path of item.files) files.append(make("li", "", path));
+      inner.append(files);
+      inner.append(make("h2", "comments-heading", "작성자가 보고한 검증"));
+      inner.append(markdownText("div", "post-body", item.validation || "별도 검증 결과가 기록되지 않았습니다."));
+      reader.replaceChildren(inner);
+      reader.scrollTop = 0;
+    } catch (error) {
+      if (requestNumber === state.threadRequest) {
+        reader.replaceChildren(make("div", "reader-empty", `결과물을 불러오지 못했습니다: ${error.message}`));
+      }
+    }
+  };
+
+  const renderCalls = (items, append) => {
+    const list = document.getElementById("call-list");
+    if (!append) list.replaceChildren();
+    for (const item of items) {
+      const link = make("a", "coordination-card", item.reason || "논의 참여 모집");
+      link.href = `/?run=${encodedRun}&thread=${encodeURIComponent(item.thread_id)}`;
+      link.append(make("span", "peer-meta", "원래 논의 열기"));
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        selectThread(item.thread_id, { updateHistory: true });
+      });
+      list.append(link);
+    }
+    if (!append && !items.length) list.append(make("div", "peer-meta", "열린 모집이 없습니다."));
+  };
+
+  const renderArtifacts = (items, append) => {
+    const list = document.getElementById("artifact-list");
+    if (!append) list.replaceChildren();
+    for (const item of items) {
+      const link = make("a", "coordination-card", item.note || `${item.file_count}개 파일의 변경 사항`);
+      link.href = `/?run=${encodedRun}&artifact=${encodeURIComponent(item.id)}`;
+      link.append(make("span", "peer-meta", `${item.author} · ${item.file_count}개 파일 · ${item.integrated_at ? "적용됨" : "게시됨"}`));
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        selectArtifact(item.id);
+      });
+      list.append(link);
+    }
+    if (!append && !items.length) list.append(make("div", "peer-meta", "아직 공유된 결과물이 없습니다."));
+  };
+
+  const loadCoordination = async ({ reset = false, kind = null } = {}) => {
+    if (state.boardLoading) return;
+    state.boardLoading = true;
+    const requestNumber = ++state.boardRequest;
+    const wantedVersion = state.pendingBoardVersion;
+    const calls = kind !== "artifacts";
+    const artifacts = kind !== "calls";
+    try {
+      const callParams = new URLSearchParams({ limit: "5", state: "open" });
+      const artifactParams = new URLSearchParams({ limit: "5" });
+      if (!reset && state.callCursor) callParams.set("after", state.callCursor);
+      if (!reset && state.artifactCursor) artifactParams.set("after", state.artifactCursor);
+      const [callPage, artifactPage] = await Promise.all([
+        calls ? request(`/api/runs/${encodedRun}/calls?${callParams}`) : null,
+        artifacts ? request(`/api/runs/${encodedRun}/artifacts?${artifactParams}`) : null,
+      ]);
+      if (requestNumber !== state.boardRequest) return;
+      if (callPage) {
+        renderCalls(callPage.items, !reset);
+        state.callCursor = callPage.next_cursor;
+        document.getElementById("call-more").hidden = !state.callCursor;
+      }
+      if (artifactPage) {
+        renderArtifacts(artifactPage.items, !reset);
+        state.artifactCursor = artifactPage.next_cursor;
+        document.getElementById("artifact-more").hidden = !state.artifactCursor;
+      }
+      if (reset) state.boardVersion = wantedVersion;
+      document.getElementById("coordination-refresh").hidden = state.boardVersion === state.pendingBoardVersion;
+    } catch (error) {
+      showToast(`모집과 결과물을 가져오지 못했습니다: ${error.message}`);
+    } finally {
+      state.boardLoading = false;
+    }
+  };
+
+  const renderScaling = (data) => {
+    if (!data) return;
+    const population = data.population || {};
+    const workspace = data.workspaces || {};
+    const visible = Boolean(population.configured || workspace.mode || workspace.artifact_count);
+    document.getElementById("run-status").hidden = !visible;
+    document.getElementById("collaboration-board").hidden = !visible;
+    if (!visible) return;
+    const counts = document.getElementById("run-status-counts");
+    counts.replaceChildren();
+    const policy = population.policy || {};
+    const limit = (value) => value === undefined || value === null ? "—" : String(value);
+    const boardLink = (label, target) => {
+      const button = make("button", "run-status-link", label);
+      button.type = "button";
+      button.addEventListener("click", () => document.getElementById(target).scrollIntoView({ block: "center" }));
+      return button;
+    };
+    const residents = population.resident_agents ?? population.live_agents ?? 0;
+    if (population.configured) {
+      const participation = make("span", "", `Resident ${residents}/${limit(policy.max_agents)} · Parked ${population.parked_agents || 0} · Running ${population.running_agents || 0}`);
+      participation.title = "Resident는 현재 참여 인원, Parked는 세션·작업 사본을 보존한 유휴 인원, Running은 실제 실행 중인 모델 호출입니다.";
+      counts.append(participation);
+      counts.append(boardLink(`모집 ${population.open_calls || 0}개 (준비 ${population.ready_calls || 0}) · 미완료 제안 ${population.pending_offers || 0}건`, "call-list"));
+      counts.append(make("span", "", `세션 예약 ${population.total_births || 0}/${limit(policy.max_births)} · 생성 여유 ${Math.floor(population.birth_tokens || 0)}/${limit(policy.birth_burst)}`));
+      counts.append(make("span", "", `호출 ${population.invocations_started || 0}/${limit(policy.max_invocations)}`));
+    }
+    const mode = workspace.mode === "isolated" ? "독립 작업 사본" : workspace.mode === "shared" ? "공유 작업 폴더" : "작업 사본 준비 전";
+    counts.append(boardLink(`${mode} · 결과물 ${workspace.artifact_count || 0}개`, "artifact-list"));
+    let reason = "";
+    if (population.configured) {
+      const awaitingBirth = population.ready_calls > 0 || population.initial_remaining > 0;
+      if (population.invocations_exhausted) reason = "호출 한도에 도달했습니다.";
+      else if (!population.enabled) reason = "자동 충원이 꺼져 있습니다.";
+      else if (population.pending_offers > 0) reason = `기존 동료에게 보낸 참여 제안 ${population.pending_offers}건의 실제 호출 완료를 기다립니다.`;
+      else if (population.births_exhausted) reason = "신규 참여 세션 한도에 도달했습니다. 기존 동료는 참여할 수 있습니다.";
+      else if (awaitingBirth && residents >= policy.max_agents) reason = "Resident 한도에서 추가 합류를 기다립니다. Parked 동료의 세션과 작업 사본은 보존됩니다.";
+      else if (awaitingBirth && population.next_birth_in_seconds > 0) reason = `추가 참여 슬롯까지 약 ${Math.ceil(population.next_birth_in_seconds)}초`;
+      else if (population.initial_remaining > 0) reason = `초기 참여자 ${population.initial_remaining}명의 합류를 기다립니다.`;
+      else if (population.ready_calls > 0) reason = `미충족 모집 ${population.ready_calls}개 · 실행 여유가 생기면 추가 참여를 검토합니다.`;
+      else if (population.open_calls > 0) reason = "기존 동료의 참여를 기다리는 모집이 있습니다.";
+      else reason = "열린 모집이 생기면 기존 동료부터 참여할 수 있습니다.";
+    }
+    document.getElementById("run-status-reason").textContent = reason;
+    state.pendingBoardVersion = JSON.stringify([
+      population.open_calls, population.ready_calls, population.pending_offers, population.total_births,
+      workspace.artifact_count, state.highWater,
+    ]);
+    if (state.boardVersion === null) loadCoordination({ reset: true });
+    else document.getElementById("coordination-refresh").hidden = state.boardVersion === state.pendingBoardVersion;
   };
 
   const renderStats = (statistics) => {
@@ -1664,6 +2529,7 @@ JAVASCRIPT = r"""
       const params = new URLSearchParams({
         after: String(state.highWater),
         mentions_after: String(state.mentionCursor),
+        peers: "none",
       });
       const data = await request(`/api/runs/${encodedRun}/updates?${params}`);
       if (data.new_count > 0) {
@@ -1678,7 +2544,10 @@ JAVASCRIPT = r"""
       enqueueHumanMentions(mentionData.items);
       advanceMentionCursor(mentionData.cursor);
       pollAgain = Boolean(mentionData.has_more);
-      renderPeers(data.agents);
+      renderPeerSummary(data.agent_summary);
+      renderScaling(data.scaling);
+      document.getElementById("notification-counts").textContent =
+        `알림 대기 ${data.notifications.pending_agents}명 · ${data.notifications.pending_events}건`;
       if (data.statistics) renderStats(data.statistics);
       setConnection(true);
     } catch (_error) {
@@ -1741,8 +2610,11 @@ JAVASCRIPT = r"""
   });
 
   window.addEventListener("popstate", () => {
-    const threadId = new URL(window.location.href).searchParams.get("thread");
-    if (threadId) selectThread(threadId, { updateHistory: false });
+    const params = new URL(window.location.href).searchParams;
+    if (params.get("artifact")) selectArtifact(params.get("artifact"), { updateHistory: false });
+    else if (params.get("approach")) selectInvestigation("approach", params.get("approach"), { updateHistory: false });
+    else if (params.get("report")) selectInvestigation("report", params.get("report"), { updateHistory: false });
+    else if (params.get("thread")) selectThread(params.get("thread"), { updateHistory: false, focusSubjectId: params.get("focus") });
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") pollUpdates();
@@ -1757,12 +2629,38 @@ JAVASCRIPT = r"""
     const row = event.target.closest("[data-peer-name]");
     if (row) tagIntoComposer(`@${row.dataset.peerName}`);
   });
+  document.getElementById("peer-search-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    state.peerQuery = document.getElementById("peer-search-input").value.trim();
+    loadPeers({ reset: true });
+  });
+  document.getElementById("peer-search-input").addEventListener("search", (event) => {
+    if (!event.target.value) {
+      state.peerQuery = "";
+      loadPeers({ reset: true });
+    }
+  });
+  document.getElementById("peer-load-more").addEventListener("click", () => loadPeers());
+  document.getElementById("approach-search-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    state.approachQuery = document.getElementById("approach-search-input").value.trim();
+    loadApproaches({ reset: true });
+  });
+  document.getElementById("approach-more").addEventListener("click", () => loadApproaches());
+  document.getElementById("peer-refresh").addEventListener("click", () => loadPeers({ reset: true }));
+  document.getElementById("call-more").addEventListener("click", () => loadCoordination({ kind: "calls" }));
+  document.getElementById("artifact-more").addEventListener("click", () => loadCoordination({ kind: "artifacts" }));
+  document.getElementById("coordination-refresh").addEventListener("click", () => loadCoordination({ reset: true }));
   document.getElementById("tag-all").addEventListener("click", () => {
     tagIntoComposer("@all");
   });
 
   loadThreads({ reset: true });
-  if (state.selected) selectThread(state.selected, { updateHistory: false });
+  loadApproaches({ reset: true });
+  if (state.selected) selectThread(state.selected, { updateHistory: false, focusSubjectId: urlState.searchParams.get("focus") });
+  else if (state.selectedArtifact) selectArtifact(state.selectedArtifact, { updateHistory: false });
+  else if (state.selectedApproach) selectInvestigation("approach", state.selectedApproach, { updateHistory: false });
+  else if (state.selectedReport) selectInvestigation("report", state.selectedReport, { updateHistory: false });
   pollUpdates();
   window.setInterval(pollUpdates, 5000);
   window.setInterval(expireHumanMentions, 30000);

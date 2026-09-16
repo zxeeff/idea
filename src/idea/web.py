@@ -144,13 +144,111 @@ def _public_agent(agent: dict[str, Any]) -> dict[str, Any]:
         "model",
         "effort",
         "process_state",
+        "participation_state",
+        "parked_at",
         "created_at",
         "started_at",
         "exited_at",
         "retired_at",
         "retire_reason",
     )
-    return {key: agent.get(key) for key in keys}
+    return {key: agent.get(key) for key in keys} | {
+        "participation_state": agent.get("participation_state") or "resident"
+    }
+
+
+def _agent_summary(forum: Forum, run_id: str) -> dict[str, Any]:
+    """Keep polling payloads constant-size even for hundreds of peers."""
+    agents = [_public_agent(agent) for agent in forum.list_agents(run_id)]
+    states: dict[str, int] = {}
+    resident_count = parked_count = 0
+    for agent in agents:
+        name = str(agent["process_state"])
+        states[name] = states.get(name, 0) + 1
+        if name != "retired":
+            if agent["participation_state"] == "parked":
+                parked_count += 1
+            else:
+                resident_count += 1
+    version = hashlib.sha256(
+        json.dumps(agents, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:20]
+    return {
+        "total_count": len(agents), "states": states, "version": version,
+        "resident_count": resident_count, "parked_count": parked_count,
+    }
+
+
+def _population_store(forum: Forum, run_id: str) -> Any:
+    try:
+        from .population import PopulationStore
+    except ModuleNotFoundError as error:
+        if error.name != "idea.population":
+            raise
+        return None
+    return PopulationStore(forum, run_id)
+
+
+def _scaling_summary(forum: Forum, run_id: str) -> dict[str, Any]:
+    from .workspaces import WorkspaceStore
+
+    population = _population_store(forum, run_id)
+    return {
+        "population": population.summary() if population else {"configured": False},
+        "workspaces": WorkspaceStore(forum, run_id).summary(),
+    }
+
+
+def _public_artifact(forum: Forum, artifact: dict[str, Any], *, preview: bool = False) -> dict[str, Any]:
+    result = {
+        key: artifact.get(key)
+        for key in (
+            "id", "run_id", "agent_id", "base_revision", "patch_sha256", "note",
+            "validation", "created_at", "integrated_at",
+        )
+    }
+    result["author"] = forum.get_agent(artifact["agent_id"])["name"]
+    files = artifact.get("files", [])
+    result["file_count"] = len(files)
+    result["files"] = files[:5] if preview else files
+    if preview:
+        result["note"] = str(result["note"] or "")[:280]
+        result["validation"] = str(result["validation"] or "")[:280]
+    return result
+
+
+def _public_call(call: dict[str, Any]) -> dict[str, Any]:
+    # A directory entry points back to the public discussion. It does not need
+    # internal reservation or provider session bookkeeping.
+    result = {
+        key: call.get(key)
+        for key in (
+            "id", "thread_id", "reason", "state", "template_id", "created_at",
+            "expires_at", "agent_id", "requester_agent_id", "author",
+        )
+        if key in call
+    }
+    result["reason"] = str(result.get("reason", ""))[:320]
+    return result
+
+
+def _public_comment(comment: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: comment.get(key)
+        for key in ("id", "thread_id", "author", "body", "created_at", "event_id", "provenance", "report", "exchange")
+    }
+
+
+def _comment_references(data: dict[str, Any], *, form: bool = False) -> dict[str, Any]:
+    result = {key: data[key] for key in (
+        "reply_to_event_id", "relation", "artifact_id", "validation", "evidence_event_ids",
+    ) if key in data}
+    if form:
+        if "reply_to_event_id" in result:
+            result["reply_to_event_id"] = int(result["reply_to_event_id"]) if result["reply_to_event_id"] else None
+        if "evidence_event_ids" in result:
+            result["evidence_event_ids"] = [int(value.strip()) for value in result["evidence_event_ids"].split(",") if value.strip()]
+    return result
 
 
 def _public_thread(thread: dict[str, Any]) -> dict[str, Any]:
@@ -159,13 +257,7 @@ def _public_thread(thread: dict[str, Any]) -> dict[str, Any]:
         for key, value in thread.items()
         if key not in {"comments", "attachments"}
     } | {
-        "comments": [
-            {
-                key: comment.get(key)
-                for key in ("id", "thread_id", "author", "body", "created_at")
-            }
-            for comment in thread["comments"]
-        ],
+        "comments": [_public_comment(comment) for comment in thread["comments"]],
         "attachments": [
             {
                 key: item.get(key)
@@ -202,6 +294,11 @@ def _peer_html(agent: dict[str, Any]) -> str:
         if agent.get("retire_reason")
         else ""
     )
+    participation = (
+        '<div class="peer-participation" title="세션과 작업 사본을 보존한 유휴 상태">Parked · 유휴 보존</div>'
+        if agent.get("participation_state") == "parked" and agent["process_state"] != "retired"
+        else ""
+    )
     hue = _author_hue(str(agent["name"]))
     return (
         f'<div class="peer" data-peer-name="{_e(agent["name"])}" '
@@ -210,7 +307,7 @@ def _peer_html(agent: dict[str, Any]) -> str:
         '<div>'
         f'<div class="peer-name" style="color:hsl({hue} 60% 74%)">{_e(agent["name"])}</div>'
         f'<div class="peer-meta">{_e(agent["model"])} · {_e(agent["effort"])} · '
-        f'{_e(agent["process_state"])}</div>{reason}</div></div>'
+        f'{_e(agent["process_state"])}</div>{participation}{reason}</div></div>'
     )
 
 
@@ -287,8 +384,11 @@ def render_page(forum: Forum, run_id: str) -> str:
     """Render a lightweight application shell; thread data is fetched on demand."""
 
     run = forum.get_run(run_id)
-    agents = forum.list_agents(run_id)
-    statistics = forum.run_statistics(run_id)
+    peers = forum.search_agents(run_id, limit=30)
+    agents = peers["items"]
+    agent_summary = _agent_summary(forum, run_id)
+    notifications = forum.notification_counts(run_id)
+    statistics = forum.run_statistics(run_id, include_coordination=False)
     high_water = forum.activity_high_water(run_id)
     runs = forum.list_runs()
 
@@ -322,8 +422,13 @@ def render_page(forum: Forum, run_id: str) -> str:
     </form>
   </div>
 </header>
+<section id="run-status" class="run-status" aria-label="충원과 작업 사본 상태" aria-live="polite" hidden>
+  <div id="run-status-counts" class="run-status-counts"></div>
+  <div id="run-status-reason" class="run-status-reason"></div>
+</section>
 <main class="workspace-grid" data-idea-app data-run-id="{_e(run_id)}"
-  data-high-water="{high_water}">
+  data-high-water="{high_water}" data-peer-version="{_e(agent_summary['version'])}"
+  data-peer-cursor="{_e(peers['next_cursor'] or '')}">
   <aside class="sidebar" aria-label="실행 정보">
     <section class="side-section">
       <h2 class="section-title">Workspace</h2>
@@ -337,11 +442,40 @@ def render_page(forum: Forum, run_id: str) -> str:
         <div class="stat"><strong id="stat-files">{statistics["attachment_count"]}</strong><span>파일</span></div>
       </div>
     </section>
+    <section class="side-section" aria-label="접근법 탐색">
+      <h2 class="section-title">접근법</h2>
+      <form id="approach-search-form" class="search-form peer-search" role="search">
+        <input id="approach-search-input" type="search" placeholder="가설·다음 확인 검색" aria-label="접근법 검색">
+        <button class="button" type="submit">검색</button>
+      </form>
+      <div id="approach-list" class="coordination-list"></div>
+      <button id="approach-more" class="button quiet peer-more" type="button" hidden>접근법 더 보기</button>
+    </section>
     <section class="side-section">
-      <h2 class="section-title"><span>Peers {len(agents)}</span>
+      <h2 class="section-title"><span id="peer-total">Peers {agent_summary['total_count']}</span>
         <button id="tag-all" class="mention-chip" type="button"
-          title="모든 비활성 peer를 깨우는 @all 태그">@all</button></h2>
+          title="Resident peer에게 알림을 남깁니다. 실행 한도 안에서 순차 처리됩니다.">@all</button></h2>
+      <div id="peer-participation" class="peer-summary">Resident {agent_summary['resident_count']} · Parked {agent_summary['parked_count']}</div>
+      <div id="peer-states" class="peer-summary">Running {agent_summary['states'].get('running', 0)} · Dormant {agent_summary['states'].get('dormant', 0)}</div>
+      <div class="peer-summary peer-help">Parked: 세션과 작업 사본을 보존한 유휴 상태</div>
+      <div id="notification-counts" class="peer-summary">알림 대기 {notifications['pending_agents']}명 · {notifications['pending_events']}건</div>
+      <form id="peer-search-form" class="search-form peer-search" role="search">
+        <input id="peer-search-input" type="search" placeholder="이름·모델 검색"
+          aria-label="동료 검색">
+        <button class="button" type="submit">검색</button>
+      </form>
+      <button id="peer-refresh" class="button quiet peer-refresh" type="button" hidden>동료 상태 갱신</button>
       <div id="peer-list">{peer_html}</div>
+      <button id="peer-load-more" class="button quiet peer-more" type="button"{'' if peers['next_cursor'] else ' hidden'}>동료 더 보기</button>
+    </section>
+    <section id="collaboration-board" class="side-section" hidden>
+      <h2 class="section-title">참여 모집</h2>
+      <div id="call-list" class="coordination-list"></div>
+      <button id="call-more" class="button quiet peer-more" type="button" hidden>모집 더 보기</button>
+      <h2 class="section-title artifact-heading">공유 결과물</h2>
+      <div id="artifact-list" class="coordination-list"></div>
+      <button id="artifact-more" class="button quiet peer-more" type="button" hidden>결과물 더 보기</button>
+      <button id="coordination-refresh" class="button quiet peer-more" type="button" hidden>모집·결과물 갱신</button>
     </section>
     <section class="side-section">
       <h2 class="section-title">Runs</h2>
@@ -368,7 +502,7 @@ def render_page(forum: Forum, run_id: str) -> str:
             <input name="author" value="human" aria-label="게시물 작성자">
             <input name="title" placeholder="제목" aria-label="게시물 제목" required>
           </div>
-          <textarea name="body" placeholder="공유할 내용… 즉시 알림은 @정확한-이름 또는 @all"
+          <textarea name="body" placeholder="공유할 내용… 알림은 @정확한-이름 또는 @all"
             aria-label="게시물 내용" required></textarea>
           <button class="button primary" type="submit">게시</button>
         </form>
@@ -514,7 +648,7 @@ class ForumHandler(BaseHTTPRequestHandler):
         return {
             "run": self.forum.get_run(run_id),
             "agents": [_public_agent(agent) for agent in self.forum.list_agents(run_id)],
-            "statistics": self.forum.run_statistics(run_id),
+            "statistics": self.forum.run_statistics(run_id, include_coordination=False),
             "high_water": self.forum.activity_high_water(run_id),
         }
 
@@ -550,18 +684,82 @@ class ForumHandler(BaseHTTPRequestHandler):
                 if resource == "overview":
                     self._json(self._overview(run_id))
                     return
+                if resource == "agents":
+                    self.forum.get_run(run_id)
+                    limit = self._integer(query, "limit", 30, minimum=1, maximum=100)
+                    page = self.forum.search_agents(
+                        run_id,
+                        query=query.get("q", [""])[-1],
+                        limit=limit,
+                        after=query.get("after", [None])[-1],
+                    )
+                    self._json(page | {
+                        "items": [_public_agent(agent) for agent in page["items"]],
+                        "summary": _agent_summary(self.forum, run_id),
+                    })
+                    return
+                if resource == "scaling":
+                    self.forum.get_run(run_id)
+                    self._json(_scaling_summary(self.forum, run_id))
+                    return
+                if resource == "approaches":
+                    from .approaches import ApproachStore
+
+                    self._json(ApproachStore(self.forum, run_id).list(
+                        query=query.get("q", [""])[-1],
+                        thread_id=query.get("thread", [None])[-1],
+                        limit=self._integer(query, "limit", 10, minimum=1, maximum=100),
+                        after=query.get("after", [None])[-1],
+                    ))
+                    return
+                if resource == "reports":
+                    from .reports import ReportStore
+
+                    self._json(ReportStore(self.forum, run_id).list(
+                        approach_id=query.get("approach", [None])[-1],
+                        thread_id=query.get("thread", [None])[-1],
+                        query=query.get("q", [""])[-1],
+                        limit=self._integer(query, "limit", 10, minimum=1, maximum=100),
+                        after=query.get("after", [None])[-1],
+                    ))
+                    return
+                if resource == "calls":
+                    self.forum.get_run(run_id)
+                    limit = self._integer(query, "limit", 10, minimum=1, maximum=100)
+                    store = _population_store(self.forum, run_id)
+                    page = store.list_calls(
+                        state=query.get("state", ["open"])[-1], limit=limit,
+                        after=query.get("after", [None])[-1],
+                    ) if store else {"items": [], "next_cursor": None}
+                    self._json(page | {"items": [_public_call(item) for item in page["items"]]})
+                    return
+                if resource == "artifacts":
+                    from .workspaces import WorkspaceStore
+
+                    self.forum.get_run(run_id)
+                    limit = self._integer(query, "limit", 10, minimum=1, maximum=100)
+                    page = WorkspaceStore(self.forum, run_id).list_artifacts(
+                        limit=limit, after=query.get("after", [None])[-1]
+                    )
+                    self._json(page | {
+                        "items": [_public_artifact(self.forum, item, preview=True) for item in page["items"]]
+                    })
+                    return
                 if resource == "threads":
                     limit = self._integer(query, "limit", 30, minimum=1, maximum=100)
                     before = query.get("before", [None])[-1]
                     search = query.get("q", [""])[-1]
                     items, next_cursor = self.forum.list_thread_summaries(
-                        run_id, limit=limit, before=before, query=search
+                        run_id, limit=limit, before=before, query=search,
+                        include_coordination=False,
                     )
                     self._json(
                         {
                             "items": items,
                             "next_cursor": next_cursor,
-                            "total_count": self.forum.count_threads(run_id, search),
+                            "total_count": self.forum.count_threads(
+                                run_id, search, include_coordination=False
+                            ),
                         }
                     )
                     return
@@ -577,28 +775,91 @@ class ForumHandler(BaseHTTPRequestHandler):
                         minimum=0,
                         maximum=9_223_372_036_854_775_807,
                     )
-                    summary = self.forum.activity_summary(run_id, after)
+                    summary = self.forum.activity_summary(
+                        run_id, after, include_coordination=False
+                    )
                     payload: dict[str, Any] = summary | {
-                        "agents": [
-                            _public_agent(agent) for agent in self.forum.list_agents(run_id)
-                        ],
+                        "agent_summary": _agent_summary(self.forum, run_id),
+                        "notifications": self.forum.notification_counts(run_id),
+                        "scaling": _scaling_summary(self.forum, run_id),
                         "human_mentions": self.forum.human_mentions(
                             run_id, mentions_after
                         ),
                     }
+                    # Existing consumers can retain the legacy full list. The
+                    # browser always opts out and uses the paged directory.
+                    if query.get("peers", [""])[-1] != "none":
+                        payload["agents"] = [
+                            _public_agent(agent) for agent in self.forum.list_agents(run_id)
+                        ]
                     if summary["new_count"]:
-                        payload["statistics"] = self.forum.run_statistics(run_id)
+                        payload["statistics"] = self.forum.run_statistics(
+                            run_id, include_coordination=False
+                        )
                     self._json(
                         payload
                     )
                     return
+            if len(parts) == 5 and parts[:2] == ["api", "runs"] and parts[3] in {"approaches", "reports"}:
+                if parts[3] == "approaches":
+                    from .approaches import ApproachStore
+
+                    self._json(ApproachStore(self.forum, parts[2]).get(parts[4]))
+                else:
+                    from .reports import ReportStore
+
+                    self._json(ReportStore(self.forum, parts[2]).get(parts[4]))
+                return
+            if len(parts) == 6 and parts[:2] == ["api", "runs"] and parts[3] == "approaches" and parts[5] == "members":
+                from .approaches import ApproachStore
+
+                self._json(ApproachStore(self.forum, parts[2]).members(
+                    parts[4], limit=self._integer(query, "limit", 10, minimum=1, maximum=100),
+                    after=query.get("after", [None])[-1],
+                ))
+                return
+            if len(parts) == 5 and parts[:2] == ["api", "runs"] and parts[3] == "artifacts":
+                from .workspaces import WorkspaceStore
+
+                artifact = WorkspaceStore(self.forum, parts[2]).get_artifact(parts[4])
+                self._json(_public_artifact(self.forum, artifact))
+                return
             if len(parts) == 3 and parts[:2] == ["api", "runs"]:
                 # Backwards-compatible full export. The browser UI intentionally
                 # uses the paginated endpoints above instead.
                 self._json(self.forum.snapshot(parts[2]))
                 return
             if len(parts) == 3 and parts[:2] == ["api", "threads"]:
-                self._json(_public_thread(self.forum.get_thread(parts[2])))
+                if "comments_limit" in query:
+                    limit = self._integer(
+                        query, "comments_limit", 30, minimum=1, maximum=100
+                    )
+                    thread = self.forum.get_thread(
+                        parts[2], include_comments=False, include_coordination=False
+                    )
+                    page = self.forum.comments_page(
+                        parts[2], limit=limit, include_coordination=False
+                    )
+                    thread["comments"] = page["items"]
+                    thread["comments_next_cursor"] = page["next_cursor"]
+                    self._json(_public_thread(thread))
+                else:
+                    self._json(_public_thread(self.forum.get_thread(
+                        parts[2], include_coordination=False
+                    )))
+                return
+            if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "comments":
+                limit = self._integer(query, "limit", 30, minimum=1, maximum=100)
+                page = self.forum.comments_page(
+                    parts[2], limit=limit, after=query.get("after", [None])[-1],
+                    include_coordination=False,
+                )
+                self._json(page | {"items": [_public_comment(item) for item in page["items"]]})
+                return
+            if len(parts) == 5 and parts[:2] == ["api", "threads"] and parts[3] == "comments":
+                self._json(_public_comment(self.forum.get_comment(
+                    parts[2], parts[4], include_coordination=False
+                )))
                 return
             if parsed.path == "/attachment":
                 attachment_id = query.get("id", [""])[-1]
@@ -653,6 +914,24 @@ class ForumHandler(BaseHTTPRequestHandler):
                 return
             if not self._require_authentication(parsed.path):
                 return
+            contribution = None
+            if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "approaches":
+                contribution = ("approach", {})
+            elif len(parts) == 6 and parts[:2] == ["api", "runs"]:
+                if parts[3] == "approaches" and parts[5] == "reports":
+                    contribution = ("report", {"approach_id": parts[4]})
+                elif parts[3] == "reports" and parts[5] == "adoptions":
+                    contribution = ("adopt", {"report_id": parts[4]})
+            if contribution:
+                from .commands import dispatch_forum
+
+                data = self._json_body()
+                if data.get("author", "human") != "human" or "agent_id" in data:
+                    raise ValueError("web contributions are authored by human; peer membership is chosen by the peer")
+                command, identity = contribution
+                item = dispatch_forum(self.forum, parts[2], None, command, data | identity, author="human")
+                self._json(item | {"activity_high_water": self.forum.activity_high_water(parts[2])}, HTTPStatus.CREATED)
+                return
             if parsed.path == "/post":
                 form = self._form()
                 run_id = self._required_text(form, "run_id")
@@ -672,6 +951,7 @@ class ForumHandler(BaseHTTPRequestHandler):
                     thread_id,
                     str(form.get("author", "human")),
                     self._required_text(form, "body"),
+                    **_comment_references(form, form=True),
                 )
                 self._redirect(run_id, thread_id)
                 return
@@ -703,12 +983,10 @@ class ForumHandler(BaseHTTPRequestHandler):
                     parts[2],
                     str(data.get("author", "anonymous")),
                     self._required_text(data, "body"),
-                )
-                comment["activity_high_water"] = self.forum.activity_high_water(
-                    str(comment.pop("run_id"))
+                    **_comment_references(data),
                 )
                 self._json(
-                    comment,
+                    _public_comment(comment) | {"activity_high_water": self.forum.activity_high_water(str(comment["run_id"]))},
                     HTTPStatus.CREATED,
                 )
                 return
