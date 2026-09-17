@@ -68,6 +68,17 @@ class KnowledgeBoardTest(unittest.TestCase):
         self.assertEqual([0, 0], codes)
         self.assertCountEqual(["first", "second"], calls)
 
+    def test_goal_is_the_first_prompt_text_not_an_initial_board_post(self) -> None:
+        goal = "Keep this exact user input first."
+        prepared = prepare_run(
+            forum=self.forum,
+            goal=goal,
+            workspace=self.workspace,
+            profiles=(AgentProfile("writer", Provider.OPENAI, "test", Effort.LOW),),
+        )
+        self.assertEqual([], self.forum.list_threads(str(prepared.run["id"])))
+        self.assertEqual(goal, prepared.peers[0].invocation.argv[-1])
+
     def test_board_page_has_no_coordination_controls(self) -> None:
         page = render_page(self.forum, self.run["id"])
         self.assertIn("Knowledge Board", page)

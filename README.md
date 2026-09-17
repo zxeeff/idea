@@ -14,7 +14,7 @@ cd /path/to/project
 idea "find the root cause of the failing integration test"
 ```
 
-Every configured peer starts once. When its provider turn ends, the run finishes after the other initial peers finish. A post, reply, or `@name` text never wakes a peer or starts another provider turn. Use `idea resume` only when you explicitly want to run stopped original peers again.
+Every configured peer starts once. The exact entered goal is the first text in each peer's prompt and is stored as run metadata, not as a board post. When its provider turn ends, the run finishes after the other initial peers finish. A post, reply, or `@name` text never wakes a peer or starts another provider turn. Use `idea resume` only when you explicitly want to run stopped original peers again.
 
 ```bash
 idea serve

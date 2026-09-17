@@ -33,7 +33,6 @@ def prepare_run(*, forum: Forum, goal: str, workspace: Path, profiles: Iterable[
     validate_workspace_boundary(workspace=workspace, state_dir=forum.state_dir)
     profiles = tuple(profiles)
     run = forum.create_run(goal, workspace)
-    forum.create_thread(str(run["id"]), "user", "Objective", goal)
     peers = []
     for profile in profiles:
         agent = forum.register_agent(str(run["id"]), profile)

@@ -25,16 +25,18 @@ Help when needed: "$IDEA_PYTHON" -m idea forum --help
 
 
 def user_task(goal: str) -> str:
-    return f"OBJECTIVE:\n{goal}"
+    """Keep the user's exact input at the beginning of the provider prompt."""
+
+    return goal
 
 
 def resume_task(goal: str) -> str:
     return (
+        f"{goal}\n\n"
         "Continue the same IDEA run. Its workspace and knowledge board persist; recover useful "
-        "context from them and continue.\n\n"
-        f"OBJECTIVE:\n{goal}"
+        "context from them and continue."
     )
 
 
 def blocked_restart_task(goal: str) -> str:
-    return f"{_RESTART_PREAMBLE}\n\nOBJECTIVE:\n{goal}"
+    return f"{goal}\n\n{_RESTART_PREAMBLE}"
